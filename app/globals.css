@@ -1,0 +1,180 @@
+@import "tailwindcss";
+
+/*
+ * Salishforge design tokens.
+ *
+ * Authored in OKLCH for perceptual stability; emitted with sRGB fallback so
+ * pre-2024 browsers still get a reasonable approximation. P3-wide-gamut
+ * monitors receive the saturated copper accent at full chroma; sRGB monitors
+ * receive a faithful sRGB-mapped version (browser handles this when the
+ * oklch() value resolves outside sRGB).
+ *
+ * One accent color by design. Adding a second is a brand decision, not a
+ * casual change. See CLAUDE.md.
+ */
+
+@theme {
+  /* --- Type families (CSS variables set by next/font in app/fonts.ts) --- */
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-inter-tight);
+  --font-mono: var(--font-jetbrains-mono);
+
+  /* --- Neutrals: warm paper-and-ink --- */
+  --color-paper-50:  oklch(98.5% 0.004 85);
+  --color-paper-100: oklch(97% 0.006 85);
+  --color-paper-200: oklch(94% 0.008 85);
+  --color-paper-300: oklch(90% 0.010 85);
+
+  --color-ink-400: oklch(68% 0.010 80);
+  --color-ink-600: oklch(48% 0.012 75);
+  --color-ink-800: oklch(28% 0.014 70);
+  --color-ink-950: oklch(14% 0.012 70);
+
+  /* --- Accent: molten copper (the only chromatic note) --- */
+  --color-ember-300: oklch(82% 0.10 40);
+  --color-ember-500: oklch(68% 0.18 38);
+  --color-ember-700: oklch(52% 0.15 36);
+  --color-ember-900: oklch(38% 0.12 35);
+
+  /* --- Material-aware semantic tokens (used for category tinting) --- */
+  --color-mat-laser:   oklch(72% 0.04 70);
+  --color-mat-uv:      oklch(76% 0.08 230);
+  --color-mat-crystal: oklch(85% 0.05 220);
+  --color-mat-leather: oklch(38% 0.05 50);
+  --color-mat-metal:   oklch(62% 0.01 250);
+
+  /* --- Spacing scale (4px base, Fibonacci-adjacent above 32 to break the
+        too-regular feel) --- */
+  --spacing-1: 0.25rem;   /* 4 */
+  --spacing-2: 0.5rem;    /* 8 */
+  --spacing-3: 0.75rem;   /* 12 */
+  --spacing-4: 1rem;      /* 16 */
+  --spacing-5: 1.25rem;   /* 20 */
+  --spacing-6: 1.5rem;    /* 24 */
+  --spacing-8: 2rem;      /* 32 */
+  --spacing-10: 2.5rem;   /* 40 */
+  --spacing-14: 3.5rem;   /* 56 */
+  --spacing-18: 4.5rem;   /* 72 */
+  --spacing-24: 6rem;     /* 96 */
+  --spacing-32: 8rem;     /* 128 */
+  --spacing-42: 10.5rem;  /* 168 */
+
+  /* --- Type scale (modular: 1.125 minor third for UI, 1.333 perfect fourth
+        for editorial — declared as discrete tokens so refactors are grep-able) --- */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.0625rem;     /* body cap — never above 17px */
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --text-3xl: 2.625rem;
+  --text-4xl: 3.5rem;
+  --text-5xl: 4.5rem;
+  --text-6xl: 6rem;
+  --text-display: clamp(4.5rem, 12vw, 13.75rem);
+
+  /* --- Line-heights --- */
+  --leading-display: 1.05;
+  --leading-heading: 1.15;
+  --leading-body: 1.6;
+  --leading-mono: 1.4;
+
+  /* --- Radii — subtle by default; the brand isn't pillowy --- */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-xl: 22px;
+
+  /* --- Motion: strict duration scale (no in-betweens) --- */
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --duration-slower: 520ms;
+  --duration-slowest: 840ms;
+
+  /* --- Easing curves --- */
+  --ease-out-craft: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-knife: cubic-bezier(0.83, 0, 0.17, 1);
+  --ease-out-thumb: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* Hairlines.
+   On hi-DPI screens, a true 0.5px line is achievable via border-image. The
+   block below produces an etched-feel divider that 1px never does.
+   Fallback: 1px solid var(--color-paper-300). */
+@layer utilities {
+  .hairline {
+    border-image: linear-gradient(
+      to right,
+      color-mix(in oklch, var(--color-paper-300) 60%, transparent),
+      color-mix(in oklch, var(--color-paper-300) 60%, transparent)
+    ) 1 / 0.5px;
+    border-style: solid;
+  }
+  @supports not (border-image: linear-gradient(red, red) 1 / 0.5px) {
+    .hairline {
+      border: 1px solid var(--color-paper-300);
+    }
+  }
+  .hairline-t { border-top-width: 0.5px; }
+  .hairline-b { border-bottom-width: 0.5px; }
+
+  /* Numerals: tabular slashed-zero everywhere a price, count, dimension,
+     order number, or timer appears. */
+  .nums-tabular {
+    font-variant-numeric: tabular-nums slashed-zero;
+  }
+  .nums-oldstyle {
+    font-variant-numeric: proportional-nums oldstyle-nums;
+  }
+}
+
+/* --- Page baseline --- */
+html, body {
+  background-color: var(--color-paper-50);
+  color: var(--color-ink-950);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-body);
+  font-feature-settings: "ss01", "kern", "liga", "calt";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background-color: color-mix(in oklch, var(--color-ember-500) 35%, transparent);
+  color: var(--color-ink-950);
+}
+
+/* Reduced motion: collapse durations, replace springs with the knife curve. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 120ms !important;
+    transition-timing-function: var(--ease-in-out-knife) !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Subtle paper noise on large light surfaces. Imperceptible until removed,
+   at which point the page goes flat and digital. Applied via class. */
+.surface-noise {
+  position: relative;
+  isolation: isolate;
+}
+.surface-noise::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.04;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.6' numOctaves='4' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
