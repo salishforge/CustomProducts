@@ -571,6 +571,107 @@ export const webhookEvents = pgTable(
 );
 
 // -----------------------------------------------------------------------------
+// 16. product_categories — display metadata for the product_category enum
+//
+// The enum itself stays authoritative (decoration method, file pipeline, AI
+// prompt scaffold are all keyed off it). This table carries operator-editable
+// presentation: how each category appears in nav, on home, on category pages.
+// PK is the enum value, so the row count is bounded and writes are upsert-like.
+// -----------------------------------------------------------------------------
+
+export const productCategories = pgTable("product_categories", {
+  category: productCategoryEnum("category").primaryKey(),
+  displayName: text("display_name").notNull(),
+  blurb: text("blurb"),
+  heroImageId: fkOptional("hero_image_id"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  updatedAt: updatedAt(),
+});
+
+// -----------------------------------------------------------------------------
+// 17. site_settings — operator-editable KV
+//
+// Holds copy strings (shipping policy, lead-time disclosure, contact email),
+// feature flags (ai_generation_enabled, design_console_enabled), and pointers
+// (active_theme_revision_id). value is jsonb so it can carry strings, bools,
+// numbers, or small structured objects without schema churn.
+// -----------------------------------------------------------------------------
+
+export const siteSettings = pgTable("site_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  /** Coarse scope tag for the admin UI grouping (e.g., 'copy', 'flags', 'theme'). */
+  scope: text("scope").notNull().default("misc"),
+  updatedAt: updatedAt(),
+});
+
+// -----------------------------------------------------------------------------
+// 18. featured_products — home-page slot scheduler
+// -----------------------------------------------------------------------------
+
+export const featuredProductSlotEnum = pgEnum("featured_product_slot", [
+  "home_hero",
+  "home_secondary",
+  "made_this_week",
+]);
+
+export const featuredProducts = pgTable(
+  "featured_products",
+  {
+    id: id(),
+    productId: fkRequired("product_id"),
+    slot: featuredProductSlotEnum("slot").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("featured_products_slot_idx").on(t.slot),
+    index("featured_products_product_idx").on(t.productId),
+  ],
+);
+
+// -----------------------------------------------------------------------------
+// 19. theme_revisions — immutable snapshots of the active design state
+//
+// The active revision is referenced by site_settings.value where
+// key='active_theme_revision_id'. Switching is a single jsonb-pointer write.
+// Phase 4 (Design Console) writes here; Phase 2a creates the table so the
+// schema is stable from the start.
+// -----------------------------------------------------------------------------
+
+export const themeRevisionStatusEnum = pgEnum("theme_revision_status", [
+  "draft",
+  "proposed",
+  "applied",
+  "retired",
+]);
+
+export const themeRevisions = pgTable(
+  "theme_revisions",
+  {
+    id: id(),
+    parentId: fkOptional("parent_id"),
+    /** { palette_id, font_pairing_id, spacing_scale_id, layout_assignments: {section: variantId} } */
+    tokens: jsonb("tokens").notNull(),
+    proposedByEmail: text("proposed_by_email").notNull(),
+    /** Set when the revision was produced by the LLM Console (links chat history in `conversation`). */
+    proposedByLlmSessionId: text("proposed_by_llm_session_id"),
+    /** Raw chat + tool-call log for the conversation that produced this revision (Console-only). */
+    conversation: jsonb("conversation"),
+    status: themeRevisionStatusEnum("status").notNull().default("draft"),
+    createdAt: createdAt(),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("theme_revisions_status_idx").on(t.status),
+    index("theme_revisions_parent_idx").on(t.parentId),
+  ],
+);
+
+// -----------------------------------------------------------------------------
 // Type exports
 // -----------------------------------------------------------------------------
 
@@ -596,3 +697,11 @@ export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
 export type ProductionStage = typeof productionStages.$inferSelect;
 export type WebhookEvent = typeof webhookEvents.$inferSelect;
+export type ProductCategoryRow = typeof productCategories.$inferSelect;
+export type NewProductCategoryRow = typeof productCategories.$inferInsert;
+export type SiteSetting = typeof siteSettings.$inferSelect;
+export type NewSiteSetting = typeof siteSettings.$inferInsert;
+export type FeaturedProduct = typeof featuredProducts.$inferSelect;
+export type NewFeaturedProduct = typeof featuredProducts.$inferInsert;
+export type ThemeRevision = typeof themeRevisions.$inferSelect;
+export type NewThemeRevision = typeof themeRevisions.$inferInsert;
