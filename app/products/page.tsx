@@ -9,6 +9,7 @@ import {
   formatPriceCents,
   materialFromCategory,
 } from "@/lib/display/product";
+import { imageUrl } from "@/lib/cloudflare-images/client";
 
 export default async function CatalogPage() {
   const products = await getActiveProducts();
@@ -51,6 +52,9 @@ export default async function CatalogPage() {
               const dimensions = formatDimensionsMm(
                 product.variants[0]?.dimensionsMm,
               );
+              const heroSrc = product.heroImage
+                ? imageUrl(product.heroImage.cloudflareImageId, "public")
+                : null;
               return (
                 <li key={product.slug} className={span}>
                   <Link
@@ -59,11 +63,23 @@ export default async function CatalogPage() {
                     style={{ viewTransitionName: `product-${product.slug}` }}
                   >
                     <div
-                      className="surface-noise hairline aspect-[4/5] mb-5 transition-transform duration-[var(--duration-slow)] ease-[var(--ease-out-craft)] group-hover:-translate-y-1"
+                      className="surface-noise hairline aspect-[4/5] mb-5 overflow-hidden transition-transform duration-[var(--duration-slow)] ease-[var(--ease-out-craft)] group-hover:-translate-y-1"
                       style={{
-                        background: `color-mix(in oklch, var(--color-mat-${material}) 22%, var(--color-paper-100))`,
+                        background: heroSrc
+                          ? undefined
+                          : `color-mix(in oklch, var(--color-mat-${material}) 22%, var(--color-paper-100))`,
                       }}
-                    />
+                    >
+                      {heroSrc ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={heroSrc}
+                          alt={product.heroImage?.altText ?? product.name}
+                          loading="lazy"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : null}
+                    </div>
                     <div className="flex items-baseline justify-between gap-4">
                       <h2
                         className="font-display text-2xl md:text-3xl"

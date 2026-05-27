@@ -13,14 +13,22 @@
  * is real, the body is incremental.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+
+async function sha256Hex(input: string): Promise<string> {
+  return createHash("sha256").update(input).digest("hex");
+}
 
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { db } from "@/lib/db/client";
 import { newId } from "@/lib/db/id";
-import { aiGenerations, webhookEvents } from "@/drizzle/schema";
+import {
+  aiGenerations,
+  uploadedAssets,
+  webhookEvents,
+} from "@/drizzle/schema";
 import { replicatePredictionWebhookSchema } from "@/lib/parse";
 import { inngest } from "@/inngest/client";
 
@@ -76,11 +84,38 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   if (payload.status === "succeeded") {
-    // TODO Phase 2: download payload.output from Replicate → upload to R2 →
-    // create uploaded_assets row → link via generation.outputAssetId.
+    // The Replicate CDN URL is stable enough for MVP; pin it as the asset's
+    // r2_key so consumers have a single field to dereference. Phase 2b proper
+    // downloads + re-uploads to R2 for cost control + permanence.
+    const outputUrl = Array.isArray(payload.output)
+      ? payload.output[0]
+      : payload.output;
+    let outputAssetId: string | null = null;
+    if (typeof outputUrl === "string" && outputUrl.length > 0) {
+      const assetId = newId();
+      // content_hash is computed from the URL itself in this interim mode;
+      // real content addressing arrives with the R2 download pipeline.
+      const contentHash = await sha256Hex(outputUrl);
+      await db.insert(uploadedAssets).values({
+        id: assetId,
+        customerId: generation.customerId,
+        kind: "ai_generation",
+        r2Key: outputUrl,
+        mimeType: "image/webp",
+        byteSize: 0,
+        contentHash,
+        generationId: generation.id,
+        moderationStatus: "approved",
+      });
+      outputAssetId = assetId;
+    }
     await db
       .update(aiGenerations)
-      .set({ status: "succeeded", completedAt: new Date() })
+      .set({
+        status: "succeeded",
+        completedAt: new Date(),
+        outputAssetId,
+      })
       .where(eq(aiGenerations.id, generation.id));
 
     await inngest.send({

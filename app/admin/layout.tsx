@@ -38,7 +38,7 @@ const NAV_GROUPS: Array<{
   },
   {
     label: "Commerce",
-    items: [{ href: "/admin/orders", label: "Orders", muted: true }],
+    items: [{ href: "/admin/orders", label: "Orders" }],
   },
 ];
 

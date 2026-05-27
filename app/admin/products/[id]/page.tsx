@@ -89,20 +89,21 @@ export default async function EditProductPage({
       <nav className="border-b border-[color:var(--color-paper-300)] mb-10">
         <ul className="flex gap-8 font-mono text-[0.7rem] uppercase tracking-[0.22em]">
           <li className="pb-3 border-b-2 border-[color:var(--color-ink-950)] -mb-px text-[color:var(--color-ink-950)]">
-            Details
+            Details &amp; variants
           </li>
           <li className="pb-3 text-[color:var(--color-ink-400)]">
-            Variants ({variants.length})
-            <span className="ml-2 text-[0.6rem] tracking-[0.18em]">soon</span>
+            <Link
+              href={`/admin/products/${product.id}/images` as never}
+              className="hover:text-[color:var(--color-ink-800)] transition-colors"
+            >
+              Images
+            </Link>
           </li>
           <li className="pb-3 text-[color:var(--color-ink-400)]">
             Decoration zones <span className="ml-2 text-[0.6rem]">soon</span>
           </li>
           <li className="pb-3 text-[color:var(--color-ink-400)]">
             Mock-up <span className="ml-2 text-[0.6rem]">soon</span>
-          </li>
-          <li className="pb-3 text-[color:var(--color-ink-400)]">
-            Images <span className="ml-2 text-[0.6rem]">soon</span>
           </li>
         </ul>
       </nav>
@@ -204,6 +205,73 @@ export default async function EditProductPage({
           <PrimaryButton type="submit">Save changes</PrimaryButton>
         </div>
       </form>
+
+      <section className="mt-16 pt-8 border-t border-[color:var(--color-paper-300)]">
+        <div className="flex items-baseline justify-between mb-6">
+          <h2
+            className="font-display text-2xl"
+            style={{ fontVariationSettings: '"opsz" 28, "wght" 440' }}
+          >
+            Variants
+            <span className="ml-3 font-mono text-xs text-[color:var(--color-ink-600)] nums-tabular">
+              {variants.length}
+            </span>
+          </h2>
+          <Link
+            href={`/admin/products/${product.id}/variants/new` as never}
+            className="inline-flex items-center px-4 py-2 bg-[color:var(--color-ink-950)] text-[color:var(--color-paper-50)] font-mono text-xs uppercase tracking-[0.22em] hover:bg-[color:var(--color-ember-900)] transition-colors"
+          >
+            + New variant
+          </Link>
+        </div>
+        {variants.length === 0 ? (
+          <p className="text-sm text-[color:var(--color-ink-600)]">
+            No variants yet. Most products need at least one.
+          </p>
+        ) : (
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="border-b border-[color:var(--color-paper-300)] text-left">
+                <th className="py-2 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-[color:var(--color-ink-600)]">
+                  SKU
+                </th>
+                <th className="py-2 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-[color:var(--color-ink-600)]">
+                  Name
+                </th>
+                <th className="py-2 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] text-right">
+                  Δ price
+                </th>
+                <th className="py-2 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] text-right">
+                  Inventory
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {variants.map((v) => (
+                <tr key={v.id} className="border-b border-[color:var(--color-paper-200)] hover:bg-[color:var(--color-paper-100)]">
+                  <td className="py-3">
+                    <Link
+                      href={`/admin/products/${product.id}/variants/${v.id}` as never}
+                      className="font-mono text-xs text-[color:var(--color-ink-950)] hover:text-[color:var(--color-ember-700)] transition-colors"
+                    >
+                      {v.sku}
+                    </Link>
+                  </td>
+                  <td className="py-3 text-sm">{v.name}</td>
+                  <td className="py-3 text-right font-mono text-xs nums-tabular">
+                    {v.priceDeltaCents === 0
+                      ? "—"
+                      : `${v.priceDeltaCents > 0 ? "+" : ""}${(v.priceDeltaCents / 100).toFixed(2)}`}
+                  </td>
+                  <td className="py-3 text-right font-mono text-xs nums-tabular text-[color:var(--color-ink-600)]">
+                    {v.inventoryCount === null ? "made to order" : v.inventoryCount}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
 
       <form
         action={archiveProductAction}

@@ -17,7 +17,7 @@ import { db } from "@/lib/db/client";
 import { newId } from "@/lib/db/id";
 import { webhookEvents } from "@/drizzle/schema";
 import { stripeClient } from "@/lib/stripe/client";
-import { inngest } from "@/inngest/client";
+import { createOrderFromCheckoutSession } from "@/lib/orders/from-checkout";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,16 +56,17 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   switch (event.type) {
-    case "checkout.session.completed":
-    case "payment_intent.succeeded": {
-      const object = event.data.object as { metadata?: { orderId?: string } };
-      const orderId = object.metadata?.orderId;
-      if (orderId) {
-        await inngest.send({
-          name: "order.paid",
-          data: { orderId },
-        });
+    case "checkout.session.completed": {
+      const cs = event.data.object as Stripe.Checkout.Session;
+      const orderId = await createOrderFromCheckoutSession(cs);
+      if (!orderId) {
+        // Either no cart metadata, no email, or duplicate. Already logged
+        // inside the helper.
       }
+      break;
+    }
+    case "payment_intent.succeeded": {
+      // Already handled via checkout.session.completed; ignore the dup signal.
       break;
     }
     default:

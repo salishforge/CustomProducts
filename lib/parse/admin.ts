@@ -86,6 +86,10 @@ export const updateVariantSchema = createVariantSchema
   .partial()
   .extend({ id: z.string().min(1) });
 
+export const deleteVariantSchema = z.object({
+  id: z.string().min(1),
+});
+
 export const upsertCategorySchema = z.object({
   category: z.enum(productCategoryValues),
   displayName: z.string().min(1).max(60),

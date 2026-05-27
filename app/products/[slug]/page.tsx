@@ -15,6 +15,8 @@ import {
   materialFromCategory,
   tailParagraphs,
 } from "@/lib/display/product";
+import { imageUrl } from "@/lib/cloudflare-images/client";
+import { addProductBuyAsShownAction } from "@/app/cart/_actions";
 
 export async function generateStaticParams() {
   // Active products only — drafts/archived aren't routable for the public.
@@ -38,6 +40,9 @@ export default async function ProductDetail({
   const dimensions = formatDimensionsMm(product.variants[0]?.dimensionsMm);
   const lede = leadParagraph(product.descriptionMdx);
   const fabrication = tailParagraphs(product.descriptionMdx);
+  const heroSrc = product.heroImage
+    ? imageUrl(product.heroImage.cloudflareImageId, "public")
+    : null;
 
   return (
     <>
@@ -51,14 +56,25 @@ export default async function ProductDetail({
         </Link>
 
         <article className="mt-10 md:mt-16 grid grid-cols-1 md:grid-cols-12 gap-10 md:gap-16">
-          {/* Hero photo (placeholder until product_images are wired) */}
+          {/* Hero photo — Cloudflare Images when present, else material-tinted placeholder. */}
           <div
-            className="surface-noise hairline md:col-span-7 aspect-[4/5]"
+            className="surface-noise hairline md:col-span-7 aspect-[4/5] overflow-hidden"
             style={{
-              background: `color-mix(in oklch, var(--color-mat-${material}) 22%, var(--color-paper-100))`,
+              background: heroSrc
+                ? undefined
+                : `color-mix(in oklch, var(--color-mat-${material}) 22%, var(--color-paper-100))`,
               viewTransitionName: `product-${product.slug}`,
             }}
-          />
+          >
+            {heroSrc ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={heroSrc}
+                alt={product.heroImage?.altText ?? product.name}
+                className="w-full h-full object-cover"
+              />
+            ) : null}
+          </div>
 
           <div className="md:col-span-5 md:pt-4">
             <p className="font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] nums-tabular">
@@ -105,15 +121,16 @@ export default async function ProductDetail({
                   →
                 </span>
               </Link>
-              <button
-                type="button"
-                disabled
-                className="inline-flex items-center justify-between px-6 py-4 hairline font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] disabled:cursor-not-allowed"
-                title="Buy-as-shown is wired in Phase 2c"
-              >
-                Buy as shown
-                <span aria-hidden>—</span>
-              </button>
+              <form action={addProductBuyAsShownAction}>
+                <input type="hidden" name="productId" value={product.id} />
+                <button
+                  type="submit"
+                  className="w-full inline-flex items-center justify-between px-6 py-4 hairline font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-800)] hover:text-[color:var(--color-ink-950)] hover:border-[color:var(--color-ink-800)] transition-colors"
+                >
+                  Buy as shown
+                  <span aria-hidden>→</span>
+                </button>
+              </form>
             </div>
 
             {fabrication ? (

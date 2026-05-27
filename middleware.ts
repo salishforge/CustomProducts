@@ -18,6 +18,7 @@ export default authkitMiddleware({
       "/products/(.*)",
       "/customize/(.*)",
       "/cart",
+      "/checkout/(.*)",
       "/about",
       "/api/webhooks/(.*)",
       "/api/inngest",

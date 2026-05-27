@@ -8,8 +8,9 @@ import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
 import { runGeneration } from "@/inngest/functions/run-generation";
 import { generatePrintFiles } from "@/inngest/functions/generate-print-files";
+import { sendOrderConfirmation } from "@/inngest/functions/send-order-confirmation";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [runGeneration, generatePrintFiles],
+  functions: [runGeneration, generatePrintFiles, sendOrderConfirmation],
 });
