@@ -1,16 +1,24 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { eq } from "drizzle-orm";
 
-import { getProductBySlug, seedProducts } from "@/lib/seed/products";
+import { db } from "@/lib/db/client";
+import { products } from "@/drizzle/schema";
+import { getProductBySlug } from "@/lib/queries/catalog";
+import { materialFromCategory } from "@/lib/display/product";
 
-export function generateStaticParams() {
-  return seedProducts.map((p) => ({ slug: p.slug }));
+export async function generateStaticParams() {
+  const rows = await db
+    .select({ slug: products.slug })
+    .from(products)
+    .where(eq(products.status, "active"));
+  return rows.map((r) => ({ slug: r.slug }));
 }
 
 /*
  * Customizer placeholder.
  *
- * The real Konva stage + layer model + AI panel lands in Phase 2. This page
+ * The real Konva stage + layer model + AI panel lands in Phase 2b. This page
  * exists so the navigation flow from PDP works end-to-end and so the
  * customizer's chrome (full-bleed, single floating back-button, no global
  * nav) is established as a discrete surface from the rest of the site.
@@ -22,14 +30,15 @@ export default async function CustomizePage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const product = getProductBySlug(slug);
+  const product = await getProductBySlug(slug);
   if (!product) notFound();
+  const material = materialFromCategory(product.category);
 
   return (
     <div
       className="min-h-dvh relative"
       style={{
-        background: `color-mix(in oklch, var(--color-mat-${product.material}) 8%, var(--color-paper-50))`,
+        background: `color-mix(in oklch, var(--color-mat-${material}) 8%, var(--color-paper-50))`,
       }}
     >
       <header className="absolute top-6 left-6 md:top-8 md:left-10 z-20">
@@ -53,7 +62,7 @@ export default async function CustomizePage({
               textWrap: "balance",
             }}
           >
-            The customizer arrives in Phase 2.
+            The customizer arrives in Phase 2b.
           </h1>
           <p
             className="mt-6 text-[color:var(--color-ink-800)]"

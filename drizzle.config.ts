@@ -1,9 +1,12 @@
 import type { Config } from "drizzle-kit";
+import { existsSync } from "node:fs";
 
-if (!process.env.DATABASE_DIRECT_URL && !process.env.DATABASE_URL) {
-  // Drizzle-kit reads this file at CLI time. We don't want to block local
-  // schema-typecheck if the env isn't set yet; we only require it at migrate time.
-  // The schema is still importable and typecheckable without the URL.
+// drizzle-kit runs as a standalone Node process and doesn't pick up Next.js's
+// .env.local automatically. Load it explicitly when present.
+for (const file of [".env.local", ".env"]) {
+  if (existsSync(file)) {
+    process.loadEnvFile(file);
+  }
 }
 
 const config: Config = {

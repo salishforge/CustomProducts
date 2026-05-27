@@ -6,10 +6,9 @@
  * keyed by tag so admin Server Actions can invalidate atomically via
  * `revalidateTag('products' | 'categories' | 'featured')`.
  *
- * Phase 2a substitutes seed data with these queries. The Phase 1
- * `lib/seed/products.ts` module is preserved during the transition so the
- * site stays usable while DB is being provisioned — the customer-side flip
- * happens in a small follow-up once DATABASE_URL is live.
+ * Customer routes read exclusively through this module — no seed-file
+ * fallback. The data lives in Postgres; the dev seed in `lib/db/seed.ts`
+ * is idempotent and populates a baseline catalog on first run.
  */
 
 import { unstable_cache } from "next/cache";

@@ -3,20 +3,43 @@ import Link from "next/link";
 import { SiteFooter } from "@/components/brand/SiteFooter";
 import { SiteHeader } from "@/components/brand/SiteHeader";
 import { FamilyTile } from "@/components/brand/FamilyTile";
+import { getActiveCategoriesWithStock } from "@/lib/queries/catalog";
+import { materialFromCategory } from "@/lib/display/product";
 
 /*
  * Home — the brand statement.
  *
- * Three sections that scroll on a quiet rhythm:
- *   1. Single hero product, named in GT Sectra/Fraunces at display scale.
- *   2. "Made this week" strip (placeholder until photography exists).
- *   3. Family entry points — six broken-grid tiles.
+ * Family tiles are DB-driven: only categories with at least one active
+ * product appear, ordered by product_categories.sortOrder. Admin edits to
+ * category metadata or product status surface here within seconds via
+ * revalidateTag('categories'/'products').
  *
- * Restrained chrome. Generous whitespace. One accent color. The whole site
- * dies if this page looks like another AI-generated React landing.
+ * Hero copy and "Made this week" remain hardcoded for Phase 2a; both get
+ * wired to site_settings / featured_products in a follow-up.
  */
 
-export default function Home() {
+/** Broken-grid span cycle. Index into the array by category position to get a
+ *  CSS Grid column-span. Crafted to never land two same-width tiles next to
+ *  each other and to read as editorial rhythm rather than a uniform grid. */
+const TILE_SPANS = [
+  "md:col-span-7",
+  "md:col-span-5",
+  "md:col-span-4",
+  "md:col-span-3",
+  "md:col-span-5",
+  "md:col-span-7",
+  "md:col-span-6",
+  "md:col-span-6",
+  "md:col-span-12",
+] as const;
+
+const TILE_SIZES: Array<"sm" | "md" | "lg"> = [
+  "lg", "md", "sm", "sm", "md", "lg", "md", "md", "md",
+];
+
+export default async function Home() {
+  const categories = await getActiveCategoriesWithStock();
+
   return (
     <>
       <SiteHeader />
@@ -79,10 +102,9 @@ export default function Home() {
               Made this week.
             </h2>
             <span className="font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] nums-tabular">
-              Week 21 · 2026
+              Week 22 · 2026
             </span>
           </div>
-          {/* Placeholder strip — replaced when photography exists. */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-5">
             {Array.from({ length: 5 }).map((_, i) => (
               <div
@@ -99,75 +121,38 @@ export default function Home() {
         </section>
 
         {/* FAMILIES ---------------------------------------------------------- */}
-        <section className="px-6 md:px-14 py-16 md:py-24">
-          <div className="flex items-baseline justify-between mb-10 md:mb-14">
-            <h2
-              className="font-display text-2xl md:text-3xl"
-              style={{ fontVariationSettings: '"opsz" 32, "wght" 440' }}
-            >
-              By the material.
-            </h2>
-            <span className="font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)]">
-              Six families
-            </span>
-          </div>
-          {/* Broken-grid rhythm: 3-2-3-1 across rows on desktop, single column on mobile.
-              CSS Grid with explicit areas. */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-6 auto-rows-min">
-            <div className="md:col-span-7">
-              <FamilyTile
-                href="/products?category=crystal_engraving"
-                name="Crystal."
-                caption="Inner-engraved"
-                material="crystal"
-                size="lg"
-              />
+        {categories.length > 0 ? (
+          <section className="px-6 md:px-14 py-16 md:py-24">
+            <div className="flex items-baseline justify-between mb-10 md:mb-14">
+              <h2
+                className="font-display text-2xl md:text-3xl"
+                style={{ fontVariationSettings: '"opsz" 32, "wght" 440' }}
+              >
+                By the material.
+              </h2>
+              <span className="font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] nums-tabular">
+                {categories.length.toString().padStart(2, "0")} families
+              </span>
             </div>
-            <div className="md:col-span-5 md:row-span-2 flex flex-col gap-4 md:gap-6">
-              <FamilyTile
-                href="/products?category=drinkware"
-                name="Drinkware."
-                caption="UV print on tumblers"
-                material="uv"
-                size="md"
-              />
-              <FamilyTile
-                href="/products?category=leather_patch"
-                name="Leather."
-                caption="Laser-engraved patches"
-                material="leather"
-                size="md"
-              />
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-6 auto-rows-min">
+              {categories.map((cat, idx) => {
+                const span = TILE_SPANS[idx % TILE_SPANS.length];
+                const size = TILE_SIZES[idx % TILE_SIZES.length] ?? "md";
+                return (
+                  <div key={cat.category} className={span}>
+                    <FamilyTile
+                      href={`/products?category=${cat.category}`}
+                      name={`${cat.displayName}.`}
+                      caption={cat.blurb ?? ""}
+                      material={materialFromCategory(cat.category)}
+                      size={size}
+                    />
+                  </div>
+                );
+              })}
             </div>
-            <div className="md:col-span-4">
-              <FamilyTile
-                href="/products?category=coin"
-                name="Coins & tags."
-                caption="Brass, steel, copper"
-                material="metal"
-                size="sm"
-              />
-            </div>
-            <div className="md:col-span-3">
-              <FamilyTile
-                href="/products?category=bookmark"
-                name="Bookmarks."
-                caption="Maple, walnut, cherry"
-                material="laser"
-                size="sm"
-              />
-            </div>
-            <div className="md:col-span-12">
-              <FamilyTile
-                href="/products?category=tcg_accessory"
-                name="Deck boxes, cases, playmats."
-                caption="For the table"
-                material="uv"
-                size="md"
-              />
-            </div>
-          </div>
-        </section>
+          </section>
+        ) : null}
       </main>
 
       <SiteFooter />

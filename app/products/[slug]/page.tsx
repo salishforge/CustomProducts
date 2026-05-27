@@ -1,20 +1,28 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { eq } from "drizzle-orm";
 
 import { SiteFooter } from "@/components/brand/SiteFooter";
 import { SiteHeader } from "@/components/brand/SiteHeader";
-import { getProductBySlug, seedProducts } from "@/lib/seed/products";
+import { db } from "@/lib/db/client";
+import { products } from "@/drizzle/schema";
+import { getProductBySlug } from "@/lib/queries/catalog";
+import {
+  displayDecoration,
+  formatDimensionsMm,
+  formatPriceCents,
+  leadParagraph,
+  materialFromCategory,
+  tailParagraphs,
+} from "@/lib/display/product";
 
-export function generateStaticParams() {
-  return seedProducts.map((p) => ({ slug: p.slug }));
-}
-
-function formatPrice(cents: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(cents / 100);
+export async function generateStaticParams() {
+  // Active products only — drafts/archived aren't routable for the public.
+  const rows = await db
+    .select({ slug: products.slug })
+    .from(products)
+    .where(eq(products.status, "active"));
+  return rows.map((r) => ({ slug: r.slug }));
 }
 
 export default async function ProductDetail({
@@ -23,8 +31,13 @@ export default async function ProductDetail({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const product = getProductBySlug(slug);
+  const product = await getProductBySlug(slug);
   if (!product) notFound();
+
+  const material = materialFromCategory(product.category);
+  const dimensions = formatDimensionsMm(product.variants[0]?.dimensionsMm);
+  const lede = leadParagraph(product.descriptionMdx);
+  const fabrication = tailParagraphs(product.descriptionMdx);
 
   return (
     <>
@@ -38,19 +51,19 @@ export default async function ProductDetail({
         </Link>
 
         <article className="mt-10 md:mt-16 grid grid-cols-1 md:grid-cols-12 gap-10 md:gap-16">
-          {/* Hero photo (placeholder) ----------------------------------------------- */}
+          {/* Hero photo (placeholder until product_images are wired) */}
           <div
             className="surface-noise hairline md:col-span-7 aspect-[4/5]"
             style={{
-              background: `color-mix(in oklch, var(--color-mat-${product.material}) 22%, var(--color-paper-100))`,
+              background: `color-mix(in oklch, var(--color-mat-${material}) 22%, var(--color-paper-100))`,
               viewTransitionName: `product-${product.slug}`,
             }}
           />
 
-          {/* Copy ------------------------------------------------------------------- */}
           <div className="md:col-span-5 md:pt-4">
             <p className="font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] nums-tabular">
-              {product.decoration} · {product.dimensionsMm}
+              {displayDecoration(product.decorationMethod)}
+              {dimensions ? ` · ${dimensions}` : ""}
             </p>
             <h1
               className="mt-3 font-display text-5xl md:text-6xl leading-[1.05] -mx-1"
@@ -61,22 +74,24 @@ export default async function ProductDetail({
             >
               {product.name}.
             </h1>
-            <p
-              className="mt-8 text-[color:var(--color-ink-800)]"
-              style={{ fontSize: "var(--text-md)", textWrap: "pretty" }}
-            >
-              {product.shortDescription}
-            </p>
+            {lede ? (
+              <p
+                className="mt-8 text-[color:var(--color-ink-800)]"
+                style={{ fontSize: "var(--text-md)", textWrap: "pretty" }}
+              >
+                {lede}
+              </p>
+            ) : null}
 
             <div className="mt-10 flex items-baseline justify-between hairline hairline-b pb-4">
               <span
                 className="font-display text-3xl nums-tabular"
                 style={{ fontVariationSettings: '"opsz" 36, "wght" 440' }}
               >
-                {formatPrice(product.basePriceCents)}
+                {formatPriceCents(product.basePriceCents, product.currency)}
               </span>
               <span className="font-mono text-xs uppercase tracking-[0.18em] text-[color:var(--color-ink-600)] nums-tabular">
-                Ships in {product.leadDays} days
+                Ships in {product.leadTimeDays} days
               </span>
             </div>
 
@@ -94,24 +109,26 @@ export default async function ProductDetail({
                 type="button"
                 disabled
                 className="inline-flex items-center justify-between px-6 py-4 hairline font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] disabled:cursor-not-allowed"
-                title="Buy-as-shown is wired in Phase 2"
+                title="Buy-as-shown is wired in Phase 2c"
               >
                 Buy as shown
                 <span aria-hidden>—</span>
               </button>
             </div>
 
-            <details className="mt-10 group">
-              <summary className="cursor-pointer font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] hover:text-[color:var(--color-ink-950)] transition-colors">
-                Fabrication
-              </summary>
-              <p
-                className="mt-4 text-[color:var(--color-ink-800)] nums-tabular"
-                style={{ fontSize: "var(--text-sm)", textWrap: "pretty" }}
-              >
-                {product.fabrication}
-              </p>
-            </details>
+            {fabrication ? (
+              <details className="mt-10 group">
+                <summary className="cursor-pointer font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] hover:text-[color:var(--color-ink-950)] transition-colors">
+                  Fabrication
+                </summary>
+                <p
+                  className="mt-4 text-[color:var(--color-ink-800)] nums-tabular"
+                  style={{ fontSize: "var(--text-sm)", textWrap: "pretty" }}
+                >
+                  {fabrication}
+                </p>
+              </details>
+            ) : null}
           </div>
         </article>
       </main>
