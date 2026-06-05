@@ -2,12 +2,13 @@ import { eq, inArray } from "drizzle-orm";
 import { notFound } from "next/navigation";
 
 import { db } from "@/lib/db/client";
-import { products, uploadedAssets } from "@/drizzle/schema";
+import { decorationZones, products, uploadedAssets } from "@/drizzle/schema";
 import { getProductBySlug } from "@/lib/queries/catalog";
 import { findOpenDraft } from "@/lib/queries/drafts";
 import { getSession } from "@/lib/auth";
-import { Customizer } from "@/components/customizer/Customizer";
+import { Customizer, type ZoneOverlay } from "@/components/customizer/Customizer";
 import { designStateSchema, type DesignState } from "@/lib/parse";
+import { zoneGeometrySchema } from "@/lib/parse/admin";
 
 /**
  * Image layers persist only their assetId (the runtime src is stripped before
@@ -39,6 +40,40 @@ async function resolveAssetUrls(
     map[row.id] = row.kind === "upload" ? `/api/assets/${row.id}` : row.r2Key;
   }
   return map;
+}
+
+/**
+ * Load the variant's decoration zones and reduce them to the rect overlays the
+ * customizer can draw. Crystal (box_mm) zones have no 2D representation and are
+ * dropped here; a malformed geometry row is skipped rather than crashing the
+ * page.
+ */
+async function resolveZoneOverlays(variantId: string): Promise<ZoneOverlay[]> {
+  const rows = await db
+    .select({
+      id: decorationZones.id,
+      name: decorationZones.name,
+      geometry: decorationZones.geometry,
+    })
+    .from(decorationZones)
+    .where(eq(decorationZones.productVariantId, variantId));
+
+  const overlays: ZoneOverlay[] = [];
+  for (const row of rows) {
+    const parsed = zoneGeometrySchema.safeParse(row.geometry);
+    if (parsed.success && parsed.data.shape === "rect") {
+      overlays.push({
+        id: row.id,
+        name: row.name,
+        x: parsed.data.x,
+        y: parsed.data.y,
+        width: parsed.data.width,
+        height: parsed.data.height,
+        rotation: parsed.data.rotation,
+      });
+    }
+  }
+  return overlays;
 }
 
 export async function generateStaticParams() {
@@ -81,6 +116,7 @@ export default async function CustomizePage({
   }
 
   const assetUrls = await resolveAssetUrls(initialDesignState);
+  const zoneOverlays = await resolveZoneOverlays(variant.id);
 
   return (
     <Customizer
@@ -89,6 +125,7 @@ export default async function CustomizePage({
       productVariantId={variant.id}
       initialDesignState={initialDesignState}
       assetUrls={assetUrls}
+      zoneOverlays={zoneOverlays}
     />
   );
 }

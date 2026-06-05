@@ -108,12 +108,26 @@ function layersReducer(state: LayersState, action: LayersAction): LayersState {
 
 // --- Public component ------------------------------------------------------
 
+/** A rect decoration zone in the canonical canvas frame, drawn as a boundary
+ *  overlay so customers see where art must land. Crystal (box_mm) zones have
+ *  no 2D overlay and are filtered out before reaching the stage. */
+export type ZoneOverlay = {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+};
+
 export function Customizer({
   productName,
   productSlug,
   productVariantId,
   initialDesignState,
   assetUrls = {},
+  zoneOverlays = [],
 }: {
   productName: string;
   productSlug: string;
@@ -121,6 +135,8 @@ export function Customizer({
   initialDesignState: DesignState | null;
   /** assetId → servable url, used to rehydrate saved image layers. */
   assetUrls?: Record<string, string>;
+  /** Decoration-zone boundaries to draw behind the artwork. */
+  zoneOverlays?: ZoneOverlay[];
 }) {
   const [state, dispatch] = useReducer(layersReducer, undefined, () => ({
     layers: (initialDesignState?.zones?.main?.layers ?? []).map((l) =>
@@ -660,6 +676,7 @@ export function Customizer({
             displayScale={STAGE_DISPLAY_SCALE}
             snapThreshold={SNAP_THRESHOLD}
             layers={layers}
+            zones={zoneOverlays}
             selectedId={selectedId}
             onSelect={setSelectedId}
             onChange={(id, patch, commit) => updateLayer(id, patch, commit)}

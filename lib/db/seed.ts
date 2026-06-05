@@ -13,7 +13,56 @@ import { sql } from "drizzle-orm";
 
 import { db } from "@/lib/db/client";
 import { newId } from "@/lib/db/id";
-import { productCategories, products, productVariants } from "@/drizzle/schema";
+import {
+  decorationZones,
+  productCategories,
+  products,
+  productVariants,
+} from "@/drizzle/schema";
+
+/** Customizer canonical canvas frame (must match STAGE_WIDTH/HEIGHT). */
+const CANVAS_W = 720;
+const CANVAS_H = 900;
+
+/**
+ * A centered rect zone whose aspect mirrors the product's real proportions,
+ * fitted into ~70% of the canvas. Expressed in the canvas frame so the
+ * customizer overlays it 1:1 over the Konva stage.
+ */
+function rectZoneForDimensions(dim: { w?: number; h?: number }): {
+  shape: "rect";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+} {
+  const aspect = dim.w && dim.h ? dim.w / dim.h : 0.8;
+  const maxW = CANVAS_W * 0.7;
+  const maxH = CANVAS_H * 0.7;
+  let width = maxW;
+  let height = width / aspect;
+  if (height > maxH) {
+    height = maxH;
+    width = height * aspect;
+  }
+  return {
+    shape: "rect",
+    x: Math.round((CANVAS_W - width) / 2),
+    y: Math.round((CANVAS_H - height) / 2),
+    width: Math.round(width),
+    height: Math.round(height),
+    rotation: 0,
+  };
+}
+
+/** Default zone kind + print spec per decoration method. */
+const ZONE_SPEC_BY_METHOD = {
+  laser: { kind: "mixed", dpi: 600, colorProfile: "grayscale", vectorRequired: true },
+  uv_print: { kind: "mixed", dpi: 300, colorProfile: "sRGB", vectorRequired: false },
+  crystal_engrave: { kind: "crystal_volume", dpi: 300, colorProfile: "grayscale", vectorRequired: false },
+  dye_sub: { kind: "mixed", dpi: 300, colorProfile: "sRGB", vectorRequired: false },
+} as const;
 
 const CATEGORY_META = [
   { category: "crystal_engraving", displayName: "Crystal engravings", blurb: "Inner-engraved K9 optical crystal — photographs, logos, hand-drawn art.", sortOrder: 0 },
@@ -233,19 +282,55 @@ export async function runSeed(): Promise<void> {
       continue;
     }
 
-    await db
+    const variantSku = `SF-${p.slug}-${p.defaultVariant.skuSuffix}`;
+    const variantInserted = await db
       .insert(productVariants)
       .values({
         id: newId(),
         productId: resolvedId,
-        sku: `SF-${p.slug}-${p.defaultVariant.skuSuffix}`,
+        sku: variantSku,
         name: p.defaultVariant.name,
         attributes: {},
         priceDeltaCents: p.defaultVariant.priceDeltaCents ?? 0,
         weightGrams: p.defaultVariant.weightGrams,
         dimensionsMm: p.defaultVariant.dimensionsMm,
       })
-      .onConflictDoNothing({ target: productVariants.sku });
+      .onConflictDoNothing({ target: productVariants.sku })
+      .returning({ id: productVariants.id });
+
+    let variantId = variantInserted[0]?.id;
+    if (!variantId) {
+      const existing = await db.execute<{ id: string }>(
+        sql`SELECT id FROM product_variants WHERE sku = ${variantSku}`,
+      );
+      variantId = existing[0]?.id;
+    }
+    if (!variantId) continue;
+
+    // One default decoration zone per variant. No natural unique key on
+    // decoration_zones, so guard against duplicates by skipping variants that
+    // already have a zone (keeps the seed idempotent).
+    const zoneCount = await db.execute<{ n: number }>(
+      sql`SELECT count(*)::int as n FROM decoration_zones WHERE product_variant_id = ${variantId}`,
+    );
+    if ((zoneCount[0]?.n ?? 0) === 0) {
+      const spec = ZONE_SPEC_BY_METHOD[p.decorationMethod];
+      await db.insert(decorationZones).values({
+        id: newId(),
+        productVariantId: variantId,
+        name: "Print area",
+        kind: spec.kind,
+        geometry: rectZoneForDimensions(p.defaultVariant.dimensionsMm),
+        printSpec: {
+          dpi: spec.dpi,
+          colorProfile: spec.colorProfile,
+          maxWidthMm: p.defaultVariant.dimensionsMm.w ?? null,
+          maxHeightMm: p.defaultVariant.dimensionsMm.h ?? null,
+          vectorRequired: spec.vectorRequired,
+        },
+        ordering: 0,
+      });
+    }
   }
 
   const productRows = await db.execute<{ productCount: number }>(
@@ -257,11 +342,15 @@ export async function runSeed(): Promise<void> {
   const variantRows = await db.execute<{ variantCount: number }>(
     sql`SELECT count(*)::int as "variantCount" FROM product_variants`,
   );
+  const zoneRows = await db.execute<{ zoneCount: number }>(
+    sql`SELECT count(*)::int as "zoneCount" FROM decoration_zones`,
+  );
   const productCount = productRows[0]?.productCount ?? 0;
   const categoryCount = categoryRows[0]?.categoryCount ?? 0;
   const variantCount = variantRows[0]?.variantCount ?? 0;
+  const zoneCount = zoneRows[0]?.zoneCount ?? 0;
   console.log(
-    `[seed] done — ${categoryCount} categories, ${productCount} products, ${variantCount} variants`,
+    `[seed] done — ${categoryCount} categories, ${productCount} products, ${variantCount} variants, ${zoneCount} zones`,
   );
 }
 

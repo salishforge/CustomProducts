@@ -115,3 +115,68 @@ export const upsertFeaturedProductSchema = z.object({
 export const deleteFeaturedSchema = z.object({
   id: z.string().min(1),
 });
+
+// -----------------------------------------------------------------------------
+// Decoration zones
+//
+// geometry and print_spec are jsonb columns. Until the Phase 2b visual editor
+// lands, the admin edits them as raw JSON; these schemas are what that JSON is
+// parsed against before it reaches the database. A "rect" geometry is expressed
+// in the customizer's canonical 720×900 canvas frame so it overlays the Konva
+// stage 1:1; a "box_mm" geometry describes a crystal engraving volume.
+// -----------------------------------------------------------------------------
+
+const decorationZoneKindValues = [
+  "text_only",
+  "image_only",
+  "mixed",
+  "crystal_volume",
+] as const;
+
+const zoneRectGeometrySchema = z.object({
+  shape: z.literal("rect"),
+  x: z.number().nonnegative(),
+  y: z.number().nonnegative(),
+  width: z.number().positive(),
+  height: z.number().positive(),
+  rotation: z.number().default(0),
+});
+
+const zoneBoxMmGeometrySchema = z.object({
+  shape: z.literal("box_mm"),
+  widthMm: z.number().positive(),
+  heightMm: z.number().positive(),
+  depthMm: z.number().positive(),
+});
+
+export const zoneGeometrySchema = z.discriminatedUnion("shape", [
+  zoneRectGeometrySchema,
+  zoneBoxMmGeometrySchema,
+]);
+export type ZoneGeometry = z.infer<typeof zoneGeometrySchema>;
+
+export const zonePrintSpecSchema = z.object({
+  dpi: z.number().int().positive().max(2400),
+  colorProfile: z.enum(["sRGB", "CMYK", "grayscale"]).default("sRGB"),
+  maxWidthMm: z.number().positive().nullable().optional(),
+  maxHeightMm: z.number().positive().nullable().optional(),
+  vectorRequired: z.boolean().default(false),
+});
+export type ZonePrintSpec = z.infer<typeof zonePrintSpecSchema>;
+
+export const createDecorationZoneSchema = z.object({
+  productVariantId: z.string().min(1),
+  name: z.string().min(1).max(80),
+  kind: z.enum(decorationZoneKindValues),
+  geometry: zoneGeometrySchema,
+  printSpec: zonePrintSpecSchema,
+  ordering: z.number().int().min(0).default(0),
+});
+
+export const updateDecorationZoneSchema = createDecorationZoneSchema
+  .partial()
+  .extend({ id: z.string().min(1) });
+
+export const deleteDecorationZoneSchema = z.object({
+  id: z.string().min(1),
+});

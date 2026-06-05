@@ -5,13 +5,14 @@ import {
   Image as KonvaImage,
   Layer as KonvaLayer,
   Line,
+  Rect,
   Stage,
   Text,
   Transformer,
 } from "react-konva";
 import type Konva from "konva";
 
-import type { RuntimeLayer } from "./Customizer";
+import type { RuntimeLayer, ZoneOverlay } from "./Customizer";
 
 /*
  * Konva stage view.
@@ -35,6 +36,7 @@ export default function StageView({
   displayScale,
   snapThreshold,
   layers,
+  zones,
   selectedId,
   onSelect,
   onChange,
@@ -44,6 +46,7 @@ export default function StageView({
   displayScale: number;
   snapThreshold: number;
   layers: RuntimeLayer[];
+  zones: ZoneOverlay[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onChange: (
@@ -117,6 +120,35 @@ export default function StageView({
       }}
     >
       <KonvaLayer>
+        {/* Decoration-zone boundaries — drawn behind artwork, non-interactive. */}
+        {zones.map((z) => (
+          <Rect
+            key={z.id}
+            x={z.x}
+            y={z.y}
+            width={z.width}
+            height={z.height}
+            rotation={z.rotation}
+            stroke="oklch(68% 0.18 38)"
+            strokeWidth={1.5}
+            dash={[8, 6]}
+            fill="oklch(68% 0.18 38 / 0.04)"
+            listening={false}
+          />
+        ))}
+        {zones.map((z) => (
+          <Text
+            key={`label-${z.id}`}
+            x={z.x}
+            y={z.y - 18}
+            text={z.name}
+            fontSize={13}
+            fontFamily="monospace"
+            fill="oklch(58% 0.16 38)"
+            listening={false}
+          />
+        ))}
+
         {layers.map((l) => {
           if (l._hidden) return null;
           const draggable = !l._locked;
