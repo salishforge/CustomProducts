@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 
 import { newId } from "@/lib/db/id";
 import type { DesignState, Layer } from "@/lib/parse";
+import { SNAP_VH, resolveSnap, cycleSnap, type SnapLevel } from "./sheet-snap";
 
 import {
   generateForCustomizerAction,
@@ -25,6 +27,9 @@ import {
  *     Backspace, Escape (deselect)
  *   - Debounced auto-save (1500 ms after last change) — silent in normal
  *     operation, surfaces only when it fails
+ *   - Responsive stage scale (the canvas fits the viewport, not vice-versa)
+ *   - Mobile bottom-sheets: below lg the two rails collapse into draggable
+ *     sheets snapping to 12/48/92 dvh, launched from a bottom tab bar
  *
  * Deferred per plan (Phase 2b proper):
  *   - Decoration-zone magnetism (visual zone overlay arrives with the
@@ -32,7 +37,7 @@ import {
  *   - Undo-as-tree (current implementation is a stack)
  *   - WebGL2 shader mock-up preview
  *   - Virtualized font catalog
- *   - Mobile bottom-sheets
+ *   - Edge-swipe to open the rails (tab-bar launcher ships now)
  *   - Mask-based regeneration
  *   - In-browser background removal
  *   - R2 image upload
@@ -159,6 +164,19 @@ export function Customizer({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollingRef = useRef<number | null>(null);
 
+  // --- Responsive stage scale ------------------------------------------
+  // The Konva stage is a fixed 720×900 canvas; we scale the *view* to fit the
+  // available width (and height) so it never overflows a narrow phone. Canvas
+  // coordinates stay canonical, so snap math and saved layers are unaffected.
+  const stageBoxRef = useRef<HTMLDivElement>(null);
+  const [displayScale, setDisplayScale] = useState(STAGE_DISPLAY_SCALE);
+
+  // --- Mobile bottom-sheets --------------------------------------------
+  const [activeSheet, setActiveSheet] = useState<"left" | "right" | null>(null);
+  const [snap, setSnap] = useState<SnapLevel>("half");
+  const [dragVh, setDragVh] = useState<number | null>(null);
+  const dragStartRef = useRef<{ y: number; vh: number } | null>(null);
+
   const selected = useMemo(
     () => layers.find((l) => l.id === selectedId) ?? null,
     [layers, selectedId],
@@ -202,6 +220,29 @@ export function Customizer({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers.map((l) => l.id + ((l as ImageRuntime)._src ?? "")).join("|")]);
+
+  useEffect(() => {
+    const box = stageBoxRef.current;
+    if (!box) return;
+    const recompute = () => {
+      const availableWidth = box.clientWidth;
+      const availableHeight = window.innerHeight - 88; // tab bar + breathing room
+      const scale = Math.min(
+        STAGE_DISPLAY_SCALE,
+        availableWidth / STAGE_WIDTH,
+        availableHeight / STAGE_HEIGHT,
+      );
+      if (scale > 0) setDisplayScale(scale);
+    };
+    recompute();
+    const observer = new ResizeObserver(recompute);
+    observer.observe(box);
+    window.addEventListener("resize", recompute);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", recompute);
+    };
+  }, []);
 
   // --- Layer operations -------------------------------------------------
 
@@ -508,11 +549,73 @@ export function Customizer({
 
   useEffect(() => cancelPolling, [cancelPolling]);
 
+  // --- Mobile sheet gestures -------------------------------------------
+
+  const toggleSheet = useCallback((side: "left" | "right") => {
+    setActiveSheet((current) => (current === side ? null : side));
+    setSnap("half");
+  }, []);
+
+  const onHandlePointerDown = useCallback(
+    (e: ReactPointerEvent) => {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      dragStartRef.current = { y: e.clientY, vh: SNAP_VH[snap] };
+    },
+    [snap],
+  );
+
+  const onHandlePointerMove = useCallback((e: ReactPointerEvent) => {
+    const start = dragStartRef.current;
+    if (!start) return;
+    const deltaVh = ((start.y - e.clientY) / window.innerHeight) * 100;
+    setDragVh(Math.min(96, Math.max(2, start.vh + deltaVh)));
+  }, []);
+
+  const onHandlePointerUp = useCallback(() => {
+    const start = dragStartRef.current;
+    dragStartRef.current = null;
+    if (!start) return;
+    const finalVh = dragVh;
+    setDragVh(null);
+    if (finalVh === null || Math.abs(finalVh - start.vh) < 1) {
+      setSnap((s) => cycleSnap(s)); // a tap (no drag) cycles the snap height
+      return;
+    }
+    const resolved = resolveSnap(finalVh);
+    if (resolved === "dismiss") setActiveSheet(null);
+    else setSnap(resolved);
+  }, [dragVh]);
+
   // --- Render -----------------------------------------------------------
 
+  const currentVh = dragVh ?? SNAP_VH[snap];
+  const showBackdrop = activeSheet !== null && currentVh > 20;
+  const railTransition =
+    dragVh === null ? "max-lg:transition-transform max-lg:duration-300 max-lg:ease-out" : "";
+
+  function sheetVars(side: "left" | "right"): CSSProperties {
+    return {
+      "--sheet-h": `${currentVh}dvh`,
+      "--sheet-y": activeSheet === side ? "0%" : "100%",
+    } as CSSProperties;
+  }
+
   return (
-    <div className="grid grid-cols-[260px_1fr_320px] min-h-dvh">
-      <aside className="border-r border-[color:var(--color-paper-300)]/60 bg-[color:var(--color-paper-100)] p-5 flex flex-col gap-5 sticky top-0 h-dvh overflow-y-auto">
+    <div className="lg:grid lg:grid-cols-[260px_1fr_320px] min-h-dvh">
+      <aside
+        style={sheetVars("left")}
+        className={`flex flex-col gap-5 overflow-y-auto bg-[color:var(--color-paper-100)] p-5 max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-40 max-lg:h-[var(--sheet-h)] max-lg:translate-y-[var(--sheet-y)] max-lg:rounded-t-2xl max-lg:border-t max-lg:border-[color:var(--color-paper-300)] max-lg:pb-20 max-lg:shadow-[0_-10px_40px_rgba(20,20,16,0.12)] ${railTransition} lg:sticky lg:top-0 lg:h-dvh lg:border-r lg:border-[color:var(--color-paper-300)]/60`}
+      >
+        <div
+          className="lg:hidden -mx-5 -mt-5 mb-1 flex shrink-0 cursor-grab touch-none items-center justify-center pt-3 pb-2"
+          onPointerDown={onHandlePointerDown}
+          onPointerMove={onHandlePointerMove}
+          onPointerUp={onHandlePointerUp}
+          onPointerCancel={onHandlePointerUp}
+        >
+          <span className="h-1.5 w-10 rounded-full bg-[color:var(--color-paper-300)]" aria-hidden />
+        </div>
+
         <Link
           href={`/products/${productSlug}` as never}
           className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] hover:text-[color:var(--color-ink-950)] transition-colors"
@@ -662,30 +765,45 @@ export function Customizer({
       </aside>
 
       {/* CENTER — stage */}
-      <main className="flex items-center justify-center p-8 bg-[color:var(--color-paper-50)]">
-        <div
-          className="surface-noise hairline shadow-sm"
-          style={{
-            width: STAGE_WIDTH * STAGE_DISPLAY_SCALE,
-            height: STAGE_HEIGHT * STAGE_DISPLAY_SCALE,
-          }}
-        >
-          <StageView
-            width={STAGE_WIDTH}
-            height={STAGE_HEIGHT}
-            displayScale={STAGE_DISPLAY_SCALE}
-            snapThreshold={SNAP_THRESHOLD}
-            layers={layers}
-            zones={zoneOverlays}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onChange={(id, patch, commit) => updateLayer(id, patch, commit)}
-          />
+      <main className="flex items-center justify-center overflow-auto bg-[color:var(--color-paper-50)] p-4 max-lg:pb-20 sm:p-8">
+        <div ref={stageBoxRef} className="flex w-full items-center justify-center">
+          <div
+            className="surface-noise hairline shadow-sm"
+            style={{
+              width: STAGE_WIDTH * displayScale,
+              height: STAGE_HEIGHT * displayScale,
+            }}
+          >
+            <StageView
+              width={STAGE_WIDTH}
+              height={STAGE_HEIGHT}
+              displayScale={displayScale}
+              snapThreshold={SNAP_THRESHOLD}
+              layers={layers}
+              zones={zoneOverlays}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onChange={(id, patch, commit) => updateLayer(id, patch, commit)}
+            />
+          </div>
         </div>
       </main>
 
       {/* RIGHT — properties + AI panel */}
-      <aside className="border-l border-[color:var(--color-paper-300)]/60 bg-[color:var(--color-paper-100)] p-5 flex flex-col gap-6 sticky top-0 h-dvh overflow-y-auto">
+      <aside
+        style={sheetVars("right")}
+        className={`flex flex-col gap-6 overflow-y-auto bg-[color:var(--color-paper-100)] p-5 max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-40 max-lg:h-[var(--sheet-h)] max-lg:translate-y-[var(--sheet-y)] max-lg:rounded-t-2xl max-lg:border-t max-lg:border-[color:var(--color-paper-300)] max-lg:pb-20 max-lg:shadow-[0_-10px_40px_rgba(20,20,16,0.12)] ${railTransition} lg:sticky lg:top-0 lg:h-dvh lg:border-l lg:border-[color:var(--color-paper-300)]/60`}
+      >
+        <div
+          className="lg:hidden -mx-5 -mt-5 mb-1 flex shrink-0 cursor-grab touch-none items-center justify-center pt-3 pb-2"
+          onPointerDown={onHandlePointerDown}
+          onPointerMove={onHandlePointerMove}
+          onPointerUp={onHandlePointerUp}
+          onPointerCancel={onHandlePointerUp}
+        >
+          <span className="h-1.5 w-10 rounded-full bg-[color:var(--color-paper-300)]" aria-hidden />
+        </div>
+
         {selected ? (
           <PropertiesPanel
             layer={selected}
@@ -730,6 +848,42 @@ export function Customizer({
           ) : null}
         </div>
       </aside>
+
+      {/* Mobile: scrim behind an opened sheet (not at the peek height). */}
+      {showBackdrop ? (
+        <button
+          type="button"
+          aria-label="Close panel"
+          onClick={() => setActiveSheet(null)}
+          className="lg:hidden fixed inset-0 z-30 bg-[color:var(--color-ink-950)]/20"
+        />
+      ) : null}
+
+      {/* Mobile: bottom tab bar launches each rail as a sheet. */}
+      <nav className="lg:hidden fixed inset-x-0 bottom-0 z-50 grid h-14 grid-cols-2 border-t border-[color:var(--color-paper-300)] bg-[color:var(--color-paper-100)]">
+        <button
+          type="button"
+          onClick={() => toggleSheet("left")}
+          className={`font-mono text-[0.65rem] uppercase tracking-[0.22em] transition-colors ${
+            activeSheet === "left"
+              ? "bg-[color:var(--color-ink-950)] text-[color:var(--color-paper-50)]"
+              : "text-[color:var(--color-ink-600)]"
+          }`}
+        >
+          Layers
+        </button>
+        <button
+          type="button"
+          onClick={() => toggleSheet("right")}
+          className={`font-mono text-[0.65rem] uppercase tracking-[0.22em] transition-colors ${
+            activeSheet === "right"
+              ? "bg-[color:var(--color-ink-950)] text-[color:var(--color-paper-50)]"
+              : "text-[color:var(--color-ink-600)]"
+          }`}
+        >
+          Edit
+        </button>
+      </nav>
     </div>
   );
 }
