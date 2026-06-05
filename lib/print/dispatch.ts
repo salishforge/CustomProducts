@@ -10,6 +10,7 @@ import type { DesignState } from "@/lib/parse";
 import { resolveDesignState } from "./resolve";
 import { buildSvg } from "./svg-builder";
 import { buildPdf } from "./pdf-builder";
+import { convertPdfToCmyk } from "./cmyk";
 
 export type PrintFile = {
   kind: "svg" | "pdf" | "png" | "dxf" | "depth_map";
@@ -59,10 +60,12 @@ export async function buildPrintFilesForOrderItem(
     case "uv_print":
     case "dye_sub": {
       const pdfBytes = await buildPdf(layers, { ...dims, bleedMm: decoration === "dye_sub" ? 5 : 3 });
+      // CMYK on a Ghostscript-equipped target; honest sRGB passthrough otherwise.
+      const printBytes = await convertPdfToCmyk(pdfBytes);
       files.push({
         kind: "pdf",
         filename: `${baseName}.pdf`,
-        bytes: pdfBytes,
+        bytes: printBytes,
       });
       break;
     }

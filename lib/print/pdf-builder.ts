@@ -6,9 +6,10 @@
  * follow-up embeds the customer's chosen face via fontkit when we ship
  * licensed font binaries.
  *
- * CMYK conversion via ICC profile attachment is a Phase 3 escalation: at
- * MVP we emit sRGB PDFs and rely on the UV printer's driver for color
- * management. Vendor-specific overrides go in the per-family wrapper.
+ * This assembler always emits sRGB — pdf-lib has no color-management engine.
+ * Device-CMYK conversion is a separate, capability-gated post-step in cmyk.ts
+ * (`convertPdfToCmyk`) that runs when Ghostscript is on the deploy target and
+ * otherwise leaves these sRGB bytes for the printer driver to color-manage.
  */
 
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";

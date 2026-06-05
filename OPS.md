@@ -100,6 +100,20 @@ Inngest dashboard manually replay the `order.print_files_needed` event
 for the affected item ids. The function overwrites the existing fixture
 files and updates `print_ready_files`.
 
+### Print color space (CMYK)
+
+UV-print and dye-sub PDFs are assembled in sRGB. Device-CMYK conversion is
+capability-gated in `lib/print/cmyk.ts`: when a `gs` (Ghostscript) binary is
+on the deploy target's PATH it converts the whole PDF to DeviceCMYK in one
+pass; when absent it passes the sRGB bytes through unchanged for the printer
+driver to color-manage. Vercel has no Ghostscript, so today every PDF is
+sRGB — confirm with `gs --version`.
+
+To turn on real CMYK output, run the print step on a Node host with
+Ghostscript installed (the plan's Fly Machine escalation): `apt-get install
+ghostscript`, redeploy, verify `gs --version` resolves. No code change is
+needed — the conversion enables itself once `gs` is present.
+
 ## Design Console
 
 `/admin/design` — pick a palette / font pairing / spacing scale from the
