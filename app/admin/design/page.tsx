@@ -1,4 +1,5 @@
 import { requireAdmin } from "@/lib/auth";
+import { isConsoleConfigured, consoleEnabled } from "@/lib/claude/console";
 import { FONT_PAIRINGS } from "@/lib/design/font-pairings";
 import {
   LAYOUT_VARIANTS,
@@ -15,6 +16,7 @@ import {
   SelectInput,
 } from "@/components/admin/Field";
 
+import { ConsoleChat } from "./_ConsoleChat";
 import {
   listRevisions,
   proposeAndApplyRevisionAction,
@@ -29,6 +31,11 @@ export default async function AdminDesignConsole() {
     getActiveTheme(),
     listRevisions(),
   ]);
+  const initialStatus = !isConsoleConfigured()
+    ? ("not_configured" as const)
+    : !consoleEnabled()
+      ? ("disabled" as const)
+      : ("ok" as const);
 
   return (
     <div className="max-w-5xl">
@@ -49,11 +56,14 @@ export default async function AdminDesignConsole() {
           public site updates on the next request. Rollback is one click.
         </p>
         <p className="mt-2 text-xs text-[color:var(--color-ink-600)]">
-          The chat-driven LLM proposal flow lands when the Anthropic SDK is
-          wired (env <code className="font-mono text-[0.65rem]">ANTHROPIC_API_KEY</code>);
-          this form is the same tool surface, just operated by hand.
+          Chat with the curator below (needs env{" "}
+          <code className="font-mono text-[0.65rem]">ANTHROPIC_API_KEY</code>),
+          or operate the same tool surface by hand with the form. Both write
+          immutable revisions validated against the brand brief.
         </p>
       </header>
+
+      <ConsoleChat initialStatus={initialStatus} />
 
       <section className="mb-12 grid grid-cols-3 gap-6">
         {[
@@ -78,7 +88,7 @@ export default async function AdminDesignConsole() {
 
       <section className="mb-14">
         <h2 className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] mb-4">
-          Propose a new revision
+          Manual tool surface
         </h2>
         <form action={proposeAndApplyRevisionAction} className="grid grid-cols-3 gap-4">
           <Field label="Palette" htmlFor="palette_id" required>

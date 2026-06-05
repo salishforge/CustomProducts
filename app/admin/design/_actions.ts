@@ -14,6 +14,35 @@ import {
 import { SECTION_IDS } from "@/lib/design/layouts";
 import { AdminValidationError } from "@/lib/admin/errors";
 
+/**
+ * Make `revisionId` the active theme: swap the site_settings pointer, mark the
+ * revision applied, and revalidate the theme/settings caches plus the customer
+ * entry point. The single chokepoint for "this revision is now live" — shared
+ * by the manual form, the LLM-proposal apply, and rollback.
+ */
+async function setActiveRevision(revisionId: string): Promise<void> {
+  await db
+    .insert(siteSettings)
+    .values({
+      key: "active_theme_revision_id",
+      value: revisionId,
+      scope: "theme",
+    })
+    .onConflictDoUpdate({
+      target: siteSettings.key,
+      set: { value: revisionId, updatedAt: new Date() },
+    });
+  await db
+    .update(themeRevisions)
+    .set({ status: "applied", appliedAt: new Date() })
+    .where(eq(themeRevisions.id, revisionId));
+
+  revalidateTag("theme");
+  revalidateTag("settings");
+  revalidatePath("/admin/design");
+  revalidatePath("/");
+}
+
 export async function proposeAndApplyRevisionAction(
   formData: FormData,
 ): Promise<void> {
@@ -39,39 +68,36 @@ export async function proposeAndApplyRevisionAction(
     });
   }
 
-  // Insert new revision (applied immediately for the operator-form path;
-  // the LLM-chat path will land as a 'proposed' revision the operator
-  // confirms separately).
   const id = newId();
-  const now = new Date();
   await db.insert(themeRevisions).values({
     id,
     parentId: null,
     tokens: tokens as unknown as Record<string, unknown>,
     proposedByEmail: session.user.email ?? "admin",
-    status: "applied",
-    appliedAt: now,
+    status: "draft",
   });
 
-  // Atomic pointer swap.
-  await db
-    .insert(siteSettings)
-    .values({
-      key: "active_theme_revision_id",
-      value: id,
-      scope: "theme",
-    })
-    .onConflictDoUpdate({
-      target: siteSettings.key,
-      set: { value: id, updatedAt: new Date() },
-    });
+  await setActiveRevision(id);
+}
 
-  revalidateTag("theme");
-  revalidateTag("settings");
-  revalidatePath("/admin/design");
-  // Also revalidate the customer entry points so the new theme is visible
-  // on next request without a manual refresh.
-  revalidatePath("/");
+/** Apply a revision the LLM already drafted (inserted by propose_revision). */
+export async function applyProposedRevisionAction(
+  formData: FormData,
+): Promise<void> {
+  await requireAdmin();
+  const revisionId = formData.get("revisionId");
+  if (typeof revisionId !== "string" || !revisionId) {
+    throw new AdminValidationError({ revisionId: ["Missing"] });
+  }
+  const [revision] = await db
+    .select()
+    .from(themeRevisions)
+    .where(eq(themeRevisions.id, revisionId))
+    .limit(1);
+  if (!revision) {
+    throw new AdminValidationError({ revisionId: ["Not found"] });
+  }
+  await setActiveRevision(revisionId);
 }
 
 export async function rollbackToRevisionAction(
@@ -90,26 +116,7 @@ export async function rollbackToRevisionAction(
   if (!revision) {
     throw new AdminValidationError({ revisionId: ["Not found"] });
   }
-  await db
-    .insert(siteSettings)
-    .values({
-      key: "active_theme_revision_id",
-      value: revisionId,
-      scope: "theme",
-    })
-    .onConflictDoUpdate({
-      target: siteSettings.key,
-      set: { value: revisionId, updatedAt: new Date() },
-    });
-  await db
-    .update(themeRevisions)
-    .set({ status: "applied", appliedAt: new Date() })
-    .where(eq(themeRevisions.id, revisionId));
-
-  revalidateTag("theme");
-  revalidateTag("settings");
-  revalidatePath("/admin/design");
-  revalidatePath("/");
+  await setActiveRevision(revisionId);
 }
 
 export async function listRevisions(limit = 25) {
