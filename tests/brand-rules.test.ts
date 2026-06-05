@@ -5,6 +5,9 @@ import {
   validateRevision,
   type ThemeRevisionTokens,
 } from "../lib/design/brand-rules";
+import { PALETTES } from "../lib/design/palettes";
+import { FONT_PAIRINGS } from "../lib/design/font-pairings";
+import { SPACING_SCALES } from "../lib/design/spacing";
 
 const validTokens: ThemeRevisionTokens = {
   palette_id: "forge-default",
@@ -60,4 +63,31 @@ describe("validateRevision", () => {
       "spacing_scale_known",
     ]);
   });
+});
+
+// Every shipped vocabulary entry must clear the brand gate on its own, so a
+// future palette/pairing/spacing addition that breaks a rule (accent out of
+// the warm band, non-serif display, body leading < 1.5) fails CI here rather
+// than in front of the operator.
+describe("shipped vocabulary obeys the brand rules", () => {
+  for (const palette of PALETTES) {
+    it(`palette "${palette.id}" passes`, () => {
+      const result = validateRevision({ ...validTokens, palette_id: palette.id });
+      assert.equal(result.ok, true);
+    });
+  }
+
+  for (const pairing of FONT_PAIRINGS) {
+    it(`font pairing "${pairing.id}" passes`, () => {
+      const result = validateRevision({ ...validTokens, font_pairing_id: pairing.id });
+      assert.equal(result.ok, true);
+    });
+  }
+
+  for (const spacing of SPACING_SCALES) {
+    it(`spacing scale "${spacing.id}" passes`, () => {
+      const result = validateRevision({ ...validTokens, spacing_scale_id: spacing.id });
+      assert.equal(result.ok, true);
+    });
+  }
 });
