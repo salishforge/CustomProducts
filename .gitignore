@@ -27,3 +27,7 @@ yarn-error.log*
 .idea/
 
 nohup.out
+
+# Local fixture storage (dev image uploads + generated print files)
+upload-fixtures/
+print-fixtures/

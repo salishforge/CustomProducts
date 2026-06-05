@@ -1,13 +1,45 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { notFound } from "next/navigation";
 
 import { db } from "@/lib/db/client";
-import { products } from "@/drizzle/schema";
+import { products, uploadedAssets } from "@/drizzle/schema";
 import { getProductBySlug } from "@/lib/queries/catalog";
 import { findOpenDraft } from "@/lib/queries/drafts";
 import { getSession } from "@/lib/auth";
 import { Customizer } from "@/components/customizer/Customizer";
 import { designStateSchema, type DesignState } from "@/lib/parse";
+
+/**
+ * Image layers persist only their assetId (the runtime src is stripped before
+ * save). To rehydrate them on reopen we resolve each assetId to a servable
+ * url: uploads stream through /api/assets/[id]; AI-generation outputs use their
+ * external r2_key directly.
+ */
+async function resolveAssetUrls(
+  state: DesignState | null,
+): Promise<Record<string, string>> {
+  if (!state) return {};
+  const assetIds = Object.values(state.zones)
+    .flatMap((z) => z.layers)
+    .filter((l) => l.kind === "image")
+    .map((l) => (l as { assetId: string }).assetId);
+  if (assetIds.length === 0) return {};
+
+  const rows = await db
+    .select({
+      id: uploadedAssets.id,
+      kind: uploadedAssets.kind,
+      r2Key: uploadedAssets.r2Key,
+    })
+    .from(uploadedAssets)
+    .where(inArray(uploadedAssets.id, assetIds));
+
+  const map: Record<string, string> = {};
+  for (const row of rows) {
+    map[row.id] = row.kind === "upload" ? `/api/assets/${row.id}` : row.r2Key;
+  }
+  return map;
+}
 
 export async function generateStaticParams() {
   const rows = await db
@@ -48,12 +80,15 @@ export default async function CustomizePage({
     if (parsed.success) initialDesignState = parsed.data;
   }
 
+  const assetUrls = await resolveAssetUrls(initialDesignState);
+
   return (
     <Customizer
       productName={product.name}
       productSlug={product.slug}
       productVariantId={variant.id}
       initialDesignState={initialDesignState}
+      assetUrls={assetUrls}
     />
   );
 }

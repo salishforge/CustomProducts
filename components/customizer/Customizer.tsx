@@ -11,6 +11,7 @@ import {
   generateForCustomizerAction,
   pollGenerationStatusAction,
   saveDesignDraftAction,
+  uploadCustomizerImageAction,
 } from "@/app/customize/[slug]/_actions/customizer";
 
 /*
@@ -112,14 +113,21 @@ export function Customizer({
   productSlug,
   productVariantId,
   initialDesignState,
+  assetUrls = {},
 }: {
   productName: string;
   productSlug: string;
   productVariantId: string;
   initialDesignState: DesignState | null;
+  /** assetId → servable url, used to rehydrate saved image layers. */
+  assetUrls?: Record<string, string>;
 }) {
   const [state, dispatch] = useReducer(layersReducer, undefined, () => ({
-    layers: (initialDesignState?.zones?.main?.layers ?? []) as RuntimeLayer[],
+    layers: (initialDesignState?.zones?.main?.layers ?? []).map((l) =>
+      l.kind === "image" && assetUrls[l.assetId]
+        ? ({ ...l, _src: assetUrls[l.assetId] } as RuntimeLayer)
+        : (l as RuntimeLayer),
+    ),
     past: [],
     future: [],
   }));
@@ -131,6 +139,8 @@ export function Customizer({
   >("idle");
   const [aiError, setAiError] = useState<string | null>(null);
   const [savingState, setSavingState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [uploadState, setUploadState] = useState<"idle" | "uploading" | "error">("idle");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const pollingRef = useRef<number | null>(null);
 
   const selected = useMemo(
@@ -206,6 +216,44 @@ export function Customizer({
     setLayers([...layers, layer]);
     setSelectedId(id);
   }, [layers, setLayers]);
+
+  const handleUpload = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = ""; // allow re-picking the same file
+      if (!file) return;
+      setUploadState("uploading");
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await uploadCustomizerImageAction(fd);
+      if (!res.ok) {
+        setUploadState("error");
+        return;
+      }
+      setUploadState("idle");
+      const id = newId();
+      const aspect = res.width && res.height ? res.width / res.height : 1;
+      const maxDim = 400;
+      const w = aspect >= 1 ? maxDim : Math.round(maxDim * aspect);
+      const h = aspect >= 1 ? Math.round(maxDim / aspect) : maxDim;
+      const layer: ImageRuntime = {
+        kind: "image",
+        id,
+        assetId: res.assetId,
+        _src: res.url,
+        transform: {
+          x: STAGE_WIDTH / 2 - w / 2,
+          y: STAGE_HEIGHT / 2 - h / 2,
+          width: w,
+          height: h,
+          rotation: 0,
+        },
+      };
+      setLayers([...layers, layer]);
+      setSelectedId(id);
+    },
+    [layers, setLayers],
+  );
 
   const updateLayer = useCallback(
     (id: string, patch: Partial<RuntimeLayer>, markHistory = true) => {
@@ -456,13 +504,35 @@ export function Customizer({
           ← {productName}
         </Link>
 
-        <button
-          type="button"
-          onClick={addText}
-          className="w-full inline-flex items-center justify-between px-4 py-2.5 bg-[color:var(--color-ink-950)] text-[color:var(--color-paper-50)] font-mono text-xs uppercase tracking-[0.22em] hover:bg-[color:var(--color-ember-900)] transition-colors"
-        >
-          + Text
-        </button>
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={addText}
+            className="w-full inline-flex items-center justify-between px-4 py-2.5 bg-[color:var(--color-ink-950)] text-[color:var(--color-paper-50)] font-mono text-xs uppercase tracking-[0.22em] hover:bg-[color:var(--color-ember-900)] transition-colors"
+          >
+            + Text
+          </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadState === "uploading"}
+            className="w-full inline-flex items-center justify-between px-4 py-2.5 border border-[color:var(--color-paper-300)] hover:border-[color:var(--color-ink-800)] font-mono text-xs uppercase tracking-[0.22em] transition-colors disabled:opacity-50"
+          >
+            {uploadState === "uploading" ? "Uploading…" : "+ Image"}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/avif"
+            className="hidden"
+            onChange={handleUpload}
+          />
+          {uploadState === "error" ? (
+            <p className="text-xs text-[color:var(--color-ember-700)]">
+              Upload failed — use a PNG, JPEG, WebP, or AVIF under 15&nbsp;MB.
+            </p>
+          ) : null}
+        </div>
 
         <div className="flex flex-col gap-1">
           <p className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] pb-2">
@@ -493,7 +563,7 @@ export function Customizer({
                         <span className="truncate inline-block max-w-[120px] align-middle text-[color:var(--color-ink-800)]">
                           {l.kind === "text"
                             ? `"${(l as TextLayer).content.slice(0, 18)}"`
-                            : "AI image"}
+                            : "Image"}
                         </span>
                       </button>
                       <button
@@ -749,7 +819,7 @@ function PropertiesPanel({
 
       {layer.kind === "image" ? (
         <p className="text-xs text-[color:var(--color-ink-600)]">
-          AI image · drag handles on the stage to resize and rotate.
+          Image · drag handles on the stage to resize and rotate.
         </p>
       ) : null}
     </div>
