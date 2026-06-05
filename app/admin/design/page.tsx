@@ -1,5 +1,10 @@
 import { requireAdmin } from "@/lib/auth";
 import { FONT_PAIRINGS } from "@/lib/design/font-pairings";
+import {
+  LAYOUT_VARIANTS,
+  SECTION_IDS,
+  resolveLayoutVariant,
+} from "@/lib/design/layouts";
 import { PALETTES } from "@/lib/design/palettes";
 import { SPACING_SCALES } from "@/lib/design/spacing";
 import { getActiveTheme } from "@/lib/theme/resolve";
@@ -118,6 +123,27 @@ export default async function AdminDesignConsole() {
               ))}
             </SelectInput>
           </Field>
+          {SECTION_IDS.map((section) => {
+            const fieldId = `layout_${section.replace(/\./g, "_")}`;
+            return (
+              <Field key={section} label={`Layout · ${section}`} htmlFor={fieldId}>
+                <SelectInput
+                  id={fieldId}
+                  name={`layout:${section}`}
+                  defaultValue={resolveLayoutVariant(
+                    section,
+                    theme.layoutAssignments,
+                  )}
+                >
+                  {LAYOUT_VARIANTS[section].map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+            );
+          })}
           <div className="col-span-3 flex items-center gap-3 pt-2">
             <PrimaryButton type="submit">Apply revision</PrimaryButton>
             <span className="text-xs text-[color:var(--color-ink-600)]">

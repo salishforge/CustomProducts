@@ -7,6 +7,7 @@
  */
 
 import { FONT_PAIRING_BY_ID } from "./font-pairings";
+import { findLayoutVariant, isSectionId } from "./layouts";
 import { PALETTE_BY_ID } from "./palettes";
 import { SPACING_BY_ID } from "./spacing";
 
@@ -76,6 +77,32 @@ export function validateRevision(tokens: ThemeRevisionTokens): ValidationResult 
       rule: "body_line_height_min",
       message: `Spacing scale "${spacing.name}" has body line-height ${spacing.leading.body}; the brand requires ≥ 1.5 so paragraphs breathe.`,
     });
+  }
+
+  for (const [section, variantId] of Object.entries(
+    tokens.layout_assignments ?? {},
+  )) {
+    if (!isSectionId(section)) {
+      violations.push({
+        rule: "layout_section_known",
+        message: `Unknown layout section: ${section}`,
+      });
+      continue;
+    }
+    const variant = findLayoutVariant(section, variantId);
+    if (!variant) {
+      violations.push({
+        rule: "layout_variant_known",
+        message: `Unknown layout variant "${variantId}" for section ${section}`,
+      });
+      continue;
+    }
+    if (section === "home.families" && !variant.brokenGrid) {
+      violations.push({
+        rule: "families_broken_grid",
+        message: `The home families section must use a broken-grid layout; "${variant.name}" is a uniform grid. Broken-grid editorial rhythm is a brand rule.`,
+      });
+    }
   }
 
   return violations.length === 0 ? { ok: true } : { ok: false, violations };

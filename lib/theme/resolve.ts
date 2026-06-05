@@ -30,6 +30,8 @@ export type ResolvedTheme = {
   palette: Palette;
   fontPairing: FontPairing;
   spacingScale: SpacingScale;
+  /** Per-section layout variant ids (lib/design/layouts). Empty = all defaults. */
+  layoutAssignments: Record<string, string>;
   cssVars: Record<string, string>;
 };
 
@@ -70,6 +72,7 @@ function resolveFromIds(tokens: ThemeRevisionTokens): ResolvedTheme {
     palette,
     fontPairing,
     spacingScale,
+    layoutAssignments: tokens.layout_assignments ?? {},
     cssVars: composeCssVars(palette, fontPairing, spacingScale),
   };
 }

@@ -11,6 +11,7 @@ import {
   validateRevision,
   type ThemeRevisionTokens,
 } from "@/lib/design/brand-rules";
+import { SECTION_IDS } from "@/lib/design/layouts";
 import { AdminValidationError } from "@/lib/admin/errors";
 
 export async function proposeAndApplyRevisionAction(
@@ -18,10 +19,17 @@ export async function proposeAndApplyRevisionAction(
 ): Promise<void> {
   const session = await requireAdmin();
 
+  const layoutAssignments: Record<string, string> = {};
+  for (const section of SECTION_IDS) {
+    const value = formData.get(`layout:${section}`);
+    if (typeof value === "string" && value) layoutAssignments[section] = value;
+  }
+
   const tokens: ThemeRevisionTokens = {
     palette_id: String(formData.get("palette_id") ?? ""),
     font_pairing_id: String(formData.get("font_pairing_id") ?? ""),
     spacing_scale_id: String(formData.get("spacing_scale_id") ?? ""),
+    layout_assignments: layoutAssignments,
   };
 
   const validation = validateRevision(tokens);

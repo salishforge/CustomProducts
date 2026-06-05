@@ -91,3 +91,54 @@ describe("shipped vocabulary obeys the brand rules", () => {
     });
   }
 });
+
+describe("validateRevision — layout assignments", () => {
+  it("passes a known assignment that obeys the rules", () => {
+    const result = validateRevision({
+      ...validTokens,
+      layout_assignments: {
+        "home.hero": "centered",
+        "home.families": "broken-grid",
+      },
+    });
+    assert.equal(result.ok, true);
+  });
+
+  it("flags an unknown section", () => {
+    const result = validateRevision({
+      ...validTokens,
+      layout_assignments: { "footer.legal": "whatever" },
+    });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.ok(result.violations.some((v) => v.rule === "layout_section_known"));
+  });
+
+  it("flags an unknown variant for a known section", () => {
+    const result = validateRevision({
+      ...validTokens,
+      layout_assignments: { "home.hero": "spinning-3d" },
+    });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.ok(result.violations.some((v) => v.rule === "layout_variant_known"));
+  });
+
+  it("blocks a uniform grid on the home families section", () => {
+    const result = validateRevision({
+      ...validTokens,
+      layout_assignments: { "home.families": "uniform-grid" },
+    });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.ok(result.violations.some((v) => v.rule === "families_broken_grid"));
+  });
+
+  it("allows a non-broken-grid variant on a section without that rule", () => {
+    const result = validateRevision({
+      ...validTokens,
+      layout_assignments: { "home.hero": "centered" },
+    });
+    assert.equal(result.ok, true);
+  });
+});

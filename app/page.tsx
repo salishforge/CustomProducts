@@ -1,8 +1,14 @@
+import type { Route } from "next";
 import Link from "next/link";
 
 import { SiteFooter } from "@/components/brand/SiteFooter";
 import { SiteHeader } from "@/components/brand/SiteHeader";
-import { FamilyTile } from "@/components/brand/FamilyTile";
+import {
+  HomeFamilies,
+  HomeHero,
+  type FamilyItem,
+  type HeroContent,
+} from "@/components/brand/variants/home";
 import {
   getActiveCategoriesWithStock,
   getActiveProducts,
@@ -12,6 +18,8 @@ import {
   formatDimensionsMm,
   materialFromCategory,
 } from "@/lib/display/product";
+import { resolveLayoutVariant } from "@/lib/design/layouts";
+import { getActiveTheme } from "@/lib/theme/resolve";
 import { imageUrl } from "@/lib/cloudflare-images/client";
 
 /*
@@ -22,31 +30,20 @@ import { imageUrl } from "@/lib/cloudflare-images/client";
  * fall back to the most recently-added active product so a fresh install
  * still has a confident landing.
  *
- * "Made this week" is operator-controllable via slot 'made_this_week'; we
- * pad to five tiles by drawing from the catalog so the layout never has
- * gaps. Family tiles below remain derived from active categories.
+ * The hero and families sections render through layout-variant switchers
+ * (components/brand/variants/home); the active theme revision's
+ * layout_assignments pick the variant per section, defaulting to the shipped
+ * editorial hero + broken-grid families. "Made this week" is fixed grammar.
  */
 
-const TILE_SPANS = [
-  "md:col-span-7",
-  "md:col-span-5",
-  "md:col-span-4",
-  "md:col-span-3",
-  "md:col-span-5",
-  "md:col-span-7",
-  "md:col-span-6",
-  "md:col-span-6",
-  "md:col-span-12",
-] as const;
-
-const TILE_SIZES: Array<"sm" | "md" | "lg"> = [
-  "lg", "md", "sm", "sm", "md", "lg", "md", "md", "md",
-];
+const HERO_LEDE =
+  "Custom-engraved cups, leather patches, dog tags, bookmarks, challenge " +
+  "coins, deck boxes, phone cases, and inner-crystal pieces. Each one made " +
+  "in a small shop in the Pacific Northwest, shipped within a week.";
 
 const HERO_FALLBACK = {
   caption: "Inner-crystal cube, 80 mm",
   title: "Forged\none at a time.",
-  link: "/products",
 };
 
 function weekNumber(d: Date): number {
@@ -57,11 +54,12 @@ function weekNumber(d: Date): number {
 }
 
 export default async function Home() {
-  const [categories, hero, madeThisWeek, allActive] = await Promise.all([
+  const [categories, hero, madeThisWeek, allActive, theme] = await Promise.all([
     getActiveCategoriesWithStock(),
     getFeaturedForSlot("home_hero"),
     getFeaturedForSlot("made_this_week"),
     getActiveProducts(),
+    getActiveTheme(),
   ]);
 
   const heroEntry = hero[0];
@@ -69,7 +67,30 @@ export default async function Home() {
   const heroDimensions = heroProduct
     ? formatDimensionsMm(heroProduct.variants[0]?.dimensionsMm)
     : null;
-  const heroMaterial = heroProduct ? materialFromCategory(heroProduct.category) : null;
+
+  const heroContent: HeroContent = heroProduct
+    ? {
+        eyebrow: `${heroProduct.name}${heroDimensions ? ` · ${heroDimensions}` : ""}`,
+        title: `${heroProduct.name}.`,
+        lede: HERO_LEDE,
+        ctaHref: `/products/${heroProduct.slug}` as Route,
+        ctaLabel: "See this piece",
+      }
+    : {
+        eyebrow: HERO_FALLBACK.caption,
+        title: HERO_FALLBACK.title,
+        lede: HERO_LEDE,
+        ctaHref: "/products" as Route,
+        ctaLabel: "See the catalog",
+      };
+
+  const familyItems: FamilyItem[] = categories.map((cat) => ({
+    category: cat.category,
+    name: `${cat.displayName}.`,
+    caption: cat.blurb ?? "",
+    href: `/products?category=${cat.category}`,
+    material: materialFromCategory(cat.category),
+  }));
 
   // Pad made-this-week to 5 tiles, drawing from the catalog tail to fill.
   const weekProducts = madeThisWeek.map((m) => m.product);
@@ -85,66 +106,10 @@ export default async function Home() {
       <SiteHeader />
 
       <main>
-        {/* HERO --------------------------------------------------------------- */}
-        <section className="surface-noise relative px-6 md:px-14 pt-16 md:pt-28 pb-24 md:pb-42">
-          <div className="flex flex-col gap-10 md:gap-16">
-            <div className="font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] nums-tabular">
-              {heroProduct
-                ? `${heroProduct.name}${heroDimensions ? ` · ${heroDimensions}` : ""}`
-                : HERO_FALLBACK.caption}
-            </div>
-            <h1
-              className="font-display leading-[var(--leading-display)] tracking-[-0.02em] -mx-1 md:-mx-2"
-              style={{
-                fontSize: "var(--text-display)",
-                fontVariationSettings: '"opsz" 144, "wght" 380, "SOFT" 0',
-                textWrap: "balance",
-              }}
-            >
-              {heroProduct ? (
-                <>
-                  {heroProduct.name}.
-                </>
-              ) : (
-                <>
-                  Forged
-                  <br />
-                  one at a time.
-                </>
-              )}
-            </h1>
-
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-10 items-end">
-              <p
-                className="md:col-span-5 md:col-start-1 text-[color:var(--color-ink-800)]"
-                style={{ fontSize: "var(--text-md)", textWrap: "pretty" }}
-              >
-                Custom-engraved cups, leather patches, dog tags, bookmarks,
-                challenge coins, deck boxes, phone cases, and inner-crystal
-                pieces. Each one made in a small shop in the Pacific Northwest,
-                shipped within a week.
-              </p>
-              <div className="md:col-span-3 md:col-start-9 flex items-baseline gap-4">
-                <Link
-                  href={
-                    heroProduct
-                      ? (`/products/${heroProduct.slug}` as `/products/${string}`)
-                      : "/products"
-                  }
-                  className="group inline-flex items-baseline gap-2 font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-950)] hover:text-[color:var(--color-ember-700)] transition-colors"
-                >
-                  {heroProduct ? "See this piece" : "See the catalog"}
-                  <span
-                    aria-hidden
-                    className="inline-block transition-transform group-hover:translate-x-1"
-                  >
-                    →
-                  </span>
-                </Link>
-              </div>
-            </div>
-          </div>
-        </section>
+        <HomeHero
+          variant={resolveLayoutVariant("home.hero", theme.layoutAssignments)}
+          content={heroContent}
+        />
 
         {/* MADE THIS WEEK ---------------------------------------------------- */}
         <section className="hairline hairline-t px-6 md:px-14 py-16 md:py-24">
@@ -200,45 +165,15 @@ export default async function Home() {
           </div>
         </section>
 
-        {/* FAMILIES ---------------------------------------------------------- */}
-        {categories.length > 0 ? (
-          <section className="px-6 md:px-14 py-16 md:py-24">
-            <div className="flex items-baseline justify-between mb-10 md:mb-14">
-              <h2
-                className="font-display text-2xl md:text-3xl"
-                style={{ fontVariationSettings: '"opsz" 32, "wght" 440' }}
-              >
-                By the material.
-              </h2>
-              <span className="font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] nums-tabular">
-                {categories.length.toString().padStart(2, "0")} families
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-6 auto-rows-min">
-              {categories.map((cat, idx) => {
-                const span = TILE_SPANS[idx % TILE_SPANS.length];
-                const size = TILE_SIZES[idx % TILE_SIZES.length] ?? "md";
-                return (
-                  <div key={cat.category} className={span}>
-                    <FamilyTile
-                      href={`/products?category=${cat.category}`}
-                      name={`${cat.displayName}.`}
-                      caption={cat.blurb ?? ""}
-                      material={materialFromCategory(cat.category)}
-                      size={size}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </section>
+        {familyItems.length > 0 ? (
+          <HomeFamilies
+            variant={resolveLayoutVariant("home.families", theme.layoutAssignments)}
+            items={familyItems}
+          />
         ) : null}
       </main>
 
       <SiteFooter />
-      {/* heroMaterial is consumed by future hero-image work; reference here so
-          unused-import lints stay happy without code-dead branches. */}
-      {heroMaterial ? null : null}
     </>
   );
 }
