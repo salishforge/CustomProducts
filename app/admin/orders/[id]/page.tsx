@@ -132,6 +132,25 @@ export default async function AdminOrderDetail({
                       history: {itemStages.join(" → ")}
                     </p>
                   ) : null}
+                  {Array.isArray(it.printReadyFiles) && (it.printReadyFiles as unknown[]).length > 0 ? (
+                    <div className="mt-3">
+                      <p className="font-mono text-[0.6rem] uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] mb-1">
+                        Print files
+                      </p>
+                      <ul className="flex flex-col gap-0.5">
+                        {(it.printReadyFiles as Array<{ filename: string; kind: string }>).map((f) => (
+                          <li key={f.filename}>
+                            <a
+                              href={`/api/admin/print-fixtures/${order.id}/${it.id}/${encodeURIComponent(f.filename)}`}
+                              className="font-mono text-xs text-[color:var(--color-ink-800)] hover:text-[color:var(--color-ember-700)] transition-colors"
+                            >
+                              ↓ {f.filename}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="col-span-3 text-right">
                   <p className="font-display text-lg nums-tabular"

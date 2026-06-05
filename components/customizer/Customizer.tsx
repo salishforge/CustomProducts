@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 
@@ -14,26 +14,35 @@ import {
 } from "@/app/customize/[slug]/_actions/customizer";
 
 /*
- * MVP customizer.
+ * Customizer (Phase 2b polish).
  *
- * Konva stage (lazy-loaded; react-konva is browser-only). Single zone called
- * 'main'. Layer model: text + image. AI generations land as image layers
- * whose `assetId` references the uploaded_assets row written by the Replicate
- * webhook.
+ * Adds:
+ *   - Undo/redo (stack, capped at 50)
+ *   - Snap-to-guides at canvas center + edges (6 px threshold)
+ *   - Layer ops: duplicate, lock, hide, reorder (move up/down)
+ *   - Keyboard shortcuts: cmd/ctrl-Z, cmd/ctrl-shift-Z, cmd/ctrl-D, Delete,
+ *     Backspace, Escape (deselect)
+ *   - Debounced auto-save (1500 ms after last change) — silent in normal
+ *     operation, surfaces only when it fails
  *
- * Deferred to a later pass per the plan:
- *   - decoration-zone magnetism + snap-to guides
- *   - undo/redo tree
- *   - WebGL2 shader-warped mock-up preview
- *   - virtualized font catalog (here: a small hand-picked set)
- *   - mobile bottom-sheets
- *   - mask-based regeneration
- *   - automatic background removal
- *   - browser file upload (needs R2 presign)
+ * Deferred per plan (Phase 2b proper):
+ *   - Decoration-zone magnetism (visual zone overlay arrives with the
+ *     admin zone editor)
+ *   - Undo-as-tree (current implementation is a stack)
+ *   - WebGL2 shader mock-up preview
+ *   - Virtualized font catalog
+ *   - Mobile bottom-sheets
+ *   - Mask-based regeneration
+ *   - In-browser background removal
+ *   - R2 image upload
  */
 
 const STAGE_WIDTH = 720;
 const STAGE_HEIGHT = 900;
+const STAGE_DISPLAY_SCALE = 0.8;
+const SNAP_THRESHOLD = 6;
+const MAX_HISTORY = 50;
+const AUTOSAVE_DELAY_MS = 1500;
 
 const FONTS = [
   { label: "Fraunces (display)", family: "var(--font-fraunces)" },
@@ -44,12 +53,59 @@ const FONTS = [
 type TextLayer = Extract<Layer, { kind: "text" }>;
 type ImageLayer = Extract<Layer, { kind: "image" }>;
 
-type ImageRuntime = ImageLayer & { _src?: string; _img?: HTMLImageElement };
-type RuntimeLayer = TextLayer | ImageRuntime;
+type ImageRuntime = ImageLayer & {
+  _src?: string;
+  _img?: HTMLImageElement;
+  _locked?: boolean;
+  _hidden?: boolean;
+};
+type TextRuntime = TextLayer & { _locked?: boolean; _hidden?: boolean };
+export type RuntimeLayer = TextRuntime | ImageRuntime;
 
-// Lazy-load the Konva stage — react-konva requires a window object so it
-// cannot be evaluated during SSR.
 const StageView = dynamic(() => import("./StageView"), { ssr: false });
+
+// --- Undo stack reducer ----------------------------------------------------
+
+type LayersAction =
+  | { type: "set"; layers: RuntimeLayer[]; markHistory?: boolean }
+  | { type: "undo" }
+  | { type: "redo" }
+  | { type: "reset"; layers: RuntimeLayer[] };
+
+type LayersState = {
+  layers: RuntimeLayer[];
+  past: RuntimeLayer[][];
+  future: RuntimeLayer[][];
+};
+
+function layersReducer(state: LayersState, action: LayersAction): LayersState {
+  switch (action.type) {
+    case "set": {
+      if (!action.markHistory) {
+        // Live updates (drag in progress, slider tweaks) do not push history.
+        return { ...state, layers: action.layers };
+      }
+      const past = [...state.past, state.layers].slice(-MAX_HISTORY);
+      return { layers: action.layers, past, future: [] };
+    }
+    case "undo": {
+      if (state.past.length === 0) return state;
+      const previous = state.past[state.past.length - 1]!;
+      const past = state.past.slice(0, -1);
+      return { layers: previous, past, future: [state.layers, ...state.future] };
+    }
+    case "redo": {
+      if (state.future.length === 0) return state;
+      const [next, ...future] = state.future;
+      const past = [...state.past, state.layers].slice(-MAX_HISTORY);
+      return { layers: next!, past, future };
+    }
+    case "reset":
+      return { layers: action.layers, past: [], future: [] };
+  }
+}
+
+// --- Public component ------------------------------------------------------
 
 export function Customizer({
   productName,
@@ -62,17 +118,19 @@ export function Customizer({
   productVariantId: string;
   initialDesignState: DesignState | null;
 }) {
-  const [layers, setLayers] = useState<RuntimeLayer[]>(() => {
-    const fromInitial = initialDesignState?.zones?.main?.layers ?? [];
-    return fromInitial as RuntimeLayer[];
-  });
+  const [state, dispatch] = useReducer(layersReducer, undefined, () => ({
+    layers: (initialDesignState?.zones?.main?.layers ?? []) as RuntimeLayer[],
+    past: [],
+    future: [],
+  }));
+  const layers = state.layers;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiStatus, setAiStatus] = useState<
     "idle" | "queued" | "running" | "succeeded" | "failed"
   >("idle");
   const [aiError, setAiError] = useState<string | null>(null);
-  const [savingState, setSavingState] = useState<"idle" | "saving" | "saved">("idle");
+  const [savingState, setSavingState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const pollingRef = useRef<number | null>(null);
 
   const selected = useMemo(
@@ -80,40 +138,56 @@ export function Customizer({
     [layers, selectedId],
   );
 
-  // Resolve image src for AI layers — point at the uploaded_assets.r2Key the
-  // webhook wrote (Replicate delivery URL in interim mode).
+  // --- Image hydration --------------------------------------------------
+
   useEffect(() => {
     let cancelled = false;
-    async function hydrateImages() {
-      const next = await Promise.all(
-        layers.map(async (l) => {
-          if (l.kind !== "image" || (l as ImageRuntime)._img) return l;
-          const r = l as ImageRuntime;
-          if (!r._src) return r;
+    async function hydrate() {
+      const needsLoad = layers.filter(
+        (l): l is ImageRuntime => l.kind === "image" && !!(l as ImageRuntime)._src && !(l as ImageRuntime)._img,
+      );
+      if (needsLoad.length === 0) return;
+      const loaded = await Promise.all(
+        needsLoad.map(async (l) => {
           const img = new window.Image();
           img.crossOrigin = "anonymous";
           await new Promise<void>((resolve, reject) => {
             img.onload = () => resolve();
-            img.onerror = () => reject(new Error(`image load failed: ${r._src}`));
-            img.src = r._src!;
+            img.onerror = () => reject(new Error(`image load failed: ${l._src}`));
+            img.src = l._src!;
           });
-          return { ...r, _img: img };
+          return { id: l.id, img };
         }),
       );
-      if (!cancelled) setLayers(next as RuntimeLayer[]);
+      if (cancelled) return;
+      const map = new Map(loaded.map((r) => [r.id, r.img]));
+      dispatch({
+        type: "set",
+        layers: layers.map((l) =>
+          l.kind === "image" && map.has(l.id)
+            ? ({ ...l, _img: map.get(l.id) } as RuntimeLayer)
+            : l,
+        ),
+      });
     }
-    hydrateImages().catch((err) => console.warn(err));
+    hydrate().catch((err) => console.warn(err));
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers.map((l) => l.id + ((l as ImageRuntime)._src ?? "")).join("|")]);
 
-  // --- Layer operations ---------------------------------------------------
+  // --- Layer operations -------------------------------------------------
+
+  const setLayers = useCallback(
+    (next: RuntimeLayer[], markHistory = true) =>
+      dispatch({ type: "set", layers: next, markHistory }),
+    [],
+  );
 
   const addText = useCallback(() => {
     const id = newId();
-    const layer: TextLayer = {
+    const layer: TextRuntime = {
       kind: "text",
       id,
       content: "Your text",
@@ -129,22 +203,185 @@ export function Customizer({
         rotation: 0,
       },
     };
-    setLayers((prev) => [...prev, layer]);
+    setLayers([...layers, layer]);
     setSelectedId(id);
-  }, []);
+  }, [layers, setLayers]);
 
-  const updateLayer = useCallback((id: string, patch: Partial<RuntimeLayer>) => {
-    setLayers((prev) =>
-      prev.map((l) => (l.id === id ? ({ ...l, ...patch } as RuntimeLayer) : l)),
-    );
-  }, []);
+  const updateLayer = useCallback(
+    (id: string, patch: Partial<RuntimeLayer>, markHistory = true) => {
+      setLayers(
+        layers.map((l) => (l.id === id ? ({ ...l, ...patch } as RuntimeLayer) : l)),
+        markHistory,
+      );
+    },
+    [layers, setLayers],
+  );
 
-  const deleteLayer = useCallback((id: string) => {
-    setLayers((prev) => prev.filter((l) => l.id !== id));
-    setSelectedId((s) => (s === id ? null : s));
-  }, []);
+  const deleteLayer = useCallback(
+    (id: string) => {
+      setLayers(layers.filter((l) => l.id !== id));
+      setSelectedId((s) => (s === id ? null : s));
+    },
+    [layers, setLayers],
+  );
 
-  // --- AI generation -----------------------------------------------------
+  const duplicateLayer = useCallback(
+    (id: string) => {
+      const original = layers.find((l) => l.id === id);
+      if (!original) return;
+      const cloneId = newId();
+      const clone: RuntimeLayer = {
+        ...(original as object),
+        id: cloneId,
+        transform: {
+          ...original.transform,
+          x: original.transform.x + 20,
+          y: original.transform.y + 20,
+        },
+      } as RuntimeLayer;
+      setLayers([...layers, clone]);
+      setSelectedId(cloneId);
+    },
+    [layers, setLayers],
+  );
+
+  const toggleLock = useCallback(
+    (id: string) => {
+      const l = layers.find((x) => x.id === id);
+      if (!l) return;
+      updateLayer(id, { _locked: !l._locked } as Partial<RuntimeLayer>);
+    },
+    [layers, updateLayer],
+  );
+
+  const toggleHidden = useCallback(
+    (id: string) => {
+      const l = layers.find((x) => x.id === id);
+      if (!l) return;
+      updateLayer(id, { _hidden: !l._hidden } as Partial<RuntimeLayer>);
+    },
+    [layers, updateLayer],
+  );
+
+  const moveLayer = useCallback(
+    (id: string, dir: -1 | 1) => {
+      const idx = layers.findIndex((l) => l.id === id);
+      if (idx < 0) return;
+      const next = [...layers];
+      const j = idx + dir;
+      if (j < 0 || j >= next.length) return;
+      [next[idx], next[j]] = [next[j]!, next[idx]!];
+      setLayers(next);
+    },
+    [layers, setLayers],
+  );
+
+  // --- Keyboard shortcuts ----------------------------------------------
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const inField =
+        target &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      if (inField) return;
+
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        dispatch({ type: "undo" });
+        return;
+      }
+      if ((mod && e.key.toLowerCase() === "z" && e.shiftKey) || (mod && e.key.toLowerCase() === "y")) {
+        e.preventDefault();
+        dispatch({ type: "redo" });
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "d") {
+        if (selectedId) {
+          e.preventDefault();
+          duplicateLayer(selectedId);
+        }
+        return;
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedId) {
+          e.preventDefault();
+          deleteLayer(selectedId);
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        setSelectedId(null);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedId, deleteLayer, duplicateLayer]);
+
+  // --- Auto-save --------------------------------------------------------
+
+  const lastSavedRef = useRef<string>("");
+  const autoSaveTimerRef = useRef<number | null>(null);
+
+  const buildDesignState = useCallback((): DesignState => {
+    const stripped = layers.map((l) => {
+      // Strip runtime-only fields (_src/_img/_locked/_hidden) before
+      // serializing — they don't exist in the Zod schema.
+      const out = { ...l } as Record<string, unknown>;
+      delete out._src;
+      delete out._img;
+      delete out._locked;
+      delete out._hidden;
+      return out as unknown as Layer;
+    });
+    return { zones: { main: { layers: stripped } } };
+  }, [layers]);
+
+  useEffect(() => {
+    const designState = buildDesignState();
+    const serialized = JSON.stringify(designState);
+    if (serialized === lastSavedRef.current) return;
+    if (autoSaveTimerRef.current !== null) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = window.setTimeout(async () => {
+      setSavingState("saving");
+      const res = await saveDesignDraftAction({
+        productVariantId,
+        designState,
+      });
+      if (res.ok) {
+        lastSavedRef.current = serialized;
+        setSavingState("saved");
+        setTimeout(() => setSavingState("idle"), 1500);
+      } else {
+        setSavingState("error");
+      }
+    }, AUTOSAVE_DELAY_MS);
+    return () => {
+      if (autoSaveTimerRef.current !== null) {
+        window.clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [buildDesignState, productVariantId]);
+
+  const saveNow = useCallback(async () => {
+    setSavingState("saving");
+    const res = await saveDesignDraftAction({
+      productVariantId,
+      designState: buildDesignState(),
+    });
+    if (res.ok) {
+      lastSavedRef.current = JSON.stringify(buildDesignState());
+      setSavingState("saved");
+      setTimeout(() => setSavingState("idle"), 1500);
+    } else {
+      setSavingState("error");
+    }
+  }, [productVariantId, buildDesignState]);
+
+  // --- AI generation ----------------------------------------------------
 
   const cancelPolling = useCallback(() => {
     if (pollingRef.current !== null) {
@@ -193,7 +430,7 @@ export function Customizer({
             rotation: 0,
           },
         };
-        setLayers((prev) => [...prev, layer]);
+        setLayers([...layers, layer]);
         setSelectedId(id);
         setAiPrompt("");
         setTimeout(() => setAiStatus("idle"), 1200);
@@ -203,43 +440,14 @@ export function Customizer({
         setAiError(("error" in status && status.error) || "generation failed");
       }
     }, 2000) as unknown as number;
-  }, [aiPrompt, productVariantId, cancelPolling]);
+  }, [aiPrompt, productVariantId, cancelPolling, layers, setLayers]);
 
   useEffect(() => cancelPolling, [cancelPolling]);
 
-  // --- Save / Add to cart ------------------------------------------------
-
-  const buildDesignState = useCallback((): DesignState => {
-    const stripped = layers.map(({ ...rest }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const r = rest as any;
-      delete r._img;
-      delete r._src;
-      return r as Layer;
-    });
-    return { zones: { main: { layers: stripped } } };
-  }, [layers]);
-
-  const save = useCallback(async () => {
-    setSavingState("saving");
-    const res = await saveDesignDraftAction({
-      productVariantId,
-      designState: buildDesignState(),
-    });
-    if (res.ok) {
-      setSavingState("saved");
-      setTimeout(() => setSavingState("idle"), 1500);
-    } else {
-      setSavingState("idle");
-      console.warn("save failed", res.reason);
-    }
-  }, [productVariantId, buildDesignState]);
-
-  // --- Render ------------------------------------------------------------
+  // --- Render -----------------------------------------------------------
 
   return (
     <div className="grid grid-cols-[260px_1fr_320px] min-h-dvh">
-      {/* LEFT — layer list */}
       <aside className="border-r border-[color:var(--color-paper-300)]/60 bg-[color:var(--color-paper-100)] p-5 flex flex-col gap-5 sticky top-0 h-dvh overflow-y-auto">
         <Link
           href={`/products/${productSlug}` as never}
@@ -248,15 +456,13 @@ export function Customizer({
           ← {productName}
         </Link>
 
-        <div className="flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={addText}
-            className="w-full inline-flex items-center justify-between px-4 py-2.5 bg-[color:var(--color-ink-950)] text-[color:var(--color-paper-50)] font-mono text-xs uppercase tracking-[0.22em] hover:bg-[color:var(--color-ember-900)] transition-colors"
-          >
-            + Text
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={addText}
+          className="w-full inline-flex items-center justify-between px-4 py-2.5 bg-[color:var(--color-ink-950)] text-[color:var(--color-paper-50)] font-mono text-xs uppercase tracking-[0.22em] hover:bg-[color:var(--color-ember-900)] transition-colors"
+        >
+          + Text
+        </button>
 
         <div className="flex flex-col gap-1">
           <p className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] pb-2">
@@ -268,53 +474,125 @@ export function Customizer({
             </p>
           ) : (
             <ul className="flex flex-col gap-0.5">
-              {[...layers].reverse().map((l) => (
-                <li key={l.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(l.id)}
-                    className={`w-full text-left px-2 py-1.5 text-xs flex items-baseline justify-between transition-colors ${
-                      selectedId === l.id
-                        ? "bg-[color:var(--color-paper-200)] text-[color:var(--color-ink-950)]"
-                        : "text-[color:var(--color-ink-800)] hover:bg-[color:var(--color-paper-200)]/60"
-                    }`}
-                  >
-                    <span className="truncate">
-                      {l.kind === "text"
-                        ? `"${(l as TextLayer).content.slice(0, 20)}"`
-                        : "AI image"}
-                    </span>
-                    <span className="font-mono text-[0.6rem] text-[color:var(--color-ink-400)] uppercase ml-2">
-                      {l.kind}
-                    </span>
-                  </button>
-                </li>
-              ))}
+              {[...layers].reverse().map((l, revIdx) => {
+                const idx = layers.length - 1 - revIdx;
+                return (
+                  <li key={l.id}>
+                    <div
+                      className={`group flex items-center gap-1 pr-1 transition-colors ${
+                        selectedId === l.id
+                          ? "bg-[color:var(--color-paper-200)]"
+                          : "hover:bg-[color:var(--color-paper-200)]/60"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setSelectedId(l.id)}
+                        className="flex-1 text-left px-2 py-1.5 text-xs"
+                      >
+                        <span className="truncate inline-block max-w-[120px] align-middle text-[color:var(--color-ink-800)]">
+                          {l.kind === "text"
+                            ? `"${(l as TextLayer).content.slice(0, 18)}"`
+                            : "AI image"}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleHidden(l.id)}
+                        title={l._hidden ? "Show" : "Hide"}
+                        className="font-mono text-[0.6rem] px-1 text-[color:var(--color-ink-400)] hover:text-[color:var(--color-ink-950)]"
+                      >
+                        {l._hidden ? "◍" : "●"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleLock(l.id)}
+                        title={l._locked ? "Unlock" : "Lock"}
+                        className="font-mono text-[0.6rem] px-1 text-[color:var(--color-ink-400)] hover:text-[color:var(--color-ink-950)]"
+                      >
+                        {l._locked ? "🔒" : "○"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveLayer(l.id, 1)}
+                        disabled={idx === layers.length - 1}
+                        title="Bring forward"
+                        className="font-mono text-[0.6rem] px-1 text-[color:var(--color-ink-400)] hover:text-[color:var(--color-ink-950)] disabled:opacity-30"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveLayer(l.id, -1)}
+                        disabled={idx === 0}
+                        title="Send backward"
+                        className="font-mono text-[0.6rem] px-1 text-[color:var(--color-ink-400)] hover:text-[color:var(--color-ink-950)] disabled:opacity-30"
+                      >
+                        ↓
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
 
         <div className="mt-auto flex flex-col gap-2">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => dispatch({ type: "undo" })}
+              disabled={state.past.length === 0}
+              title="Undo (⌘Z)"
+              className="flex-1 inline-flex items-center justify-center py-1.5 border border-[color:var(--color-paper-300)] hover:border-[color:var(--color-ink-800)] font-mono text-[0.6rem] uppercase tracking-[0.18em] transition-colors disabled:opacity-40"
+            >
+              ↺ Undo
+            </button>
+            <button
+              type="button"
+              onClick={() => dispatch({ type: "redo" })}
+              disabled={state.future.length === 0}
+              title="Redo (⌘⇧Z)"
+              className="flex-1 inline-flex items-center justify-center py-1.5 border border-[color:var(--color-paper-300)] hover:border-[color:var(--color-ink-800)] font-mono text-[0.6rem] uppercase tracking-[0.18em] transition-colors disabled:opacity-40"
+            >
+              Redo ↻
+            </button>
+          </div>
           <button
             type="button"
-            onClick={save}
+            onClick={saveNow}
             className="w-full inline-flex items-center justify-center px-4 py-2.5 border border-[color:var(--color-paper-300)] hover:border-[color:var(--color-ink-800)] font-mono text-xs uppercase tracking-[0.22em] transition-colors"
           >
-            {savingState === "saving" ? "Saving…" : savingState === "saved" ? "Saved ✓" : "Save design"}
+            {savingState === "saving"
+              ? "Saving…"
+              : savingState === "saved"
+                ? "Saved ✓"
+                : savingState === "error"
+                  ? "Save failed"
+                  : "Save now"}
           </button>
         </div>
       </aside>
 
       {/* CENTER — stage */}
       <main className="flex items-center justify-center p-8 bg-[color:var(--color-paper-50)]">
-        <div className="surface-noise hairline shadow-sm" style={{ width: STAGE_WIDTH * 0.8, height: STAGE_HEIGHT * 0.8 }}>
+        <div
+          className="surface-noise hairline shadow-sm"
+          style={{
+            width: STAGE_WIDTH * STAGE_DISPLAY_SCALE,
+            height: STAGE_HEIGHT * STAGE_DISPLAY_SCALE,
+          }}
+        >
           <StageView
             width={STAGE_WIDTH}
             height={STAGE_HEIGHT}
+            displayScale={STAGE_DISPLAY_SCALE}
+            snapThreshold={SNAP_THRESHOLD}
             layers={layers}
             selectedId={selectedId}
             onSelect={setSelectedId}
-            onChange={updateLayer}
+            onChange={(id, patch, commit) => updateLayer(id, patch, commit)}
           />
         </div>
       </main>
@@ -324,12 +602,14 @@ export function Customizer({
         {selected ? (
           <PropertiesPanel
             layer={selected}
-            onChange={(p) => updateLayer(selected.id, p as Partial<RuntimeLayer>)}
+            onChange={(p) => updateLayer(selected.id, p as Partial<RuntimeLayer>, false)}
+            onCommit={(p) => updateLayer(selected.id, p as Partial<RuntimeLayer>, true)}
             onDelete={() => deleteLayer(selected.id)}
+            onDuplicate={() => duplicateLayer(selected.id)}
           />
         ) : (
           <p className="text-xs text-[color:var(--color-ink-400)]">
-            Select a layer to edit its properties.
+            Select a layer to edit its properties. ⌘Z to undo, ⌘D to duplicate, Delete to remove, Esc to deselect.
           </p>
         )}
 
@@ -372,11 +652,15 @@ export function Customizer({
 function PropertiesPanel({
   layer,
   onChange,
+  onCommit,
   onDelete,
+  onDuplicate,
 }: {
   layer: RuntimeLayer;
   onChange: (patch: Partial<Layer>) => void;
+  onCommit: (patch: Partial<Layer>) => void;
   onDelete: () => void;
+  onDuplicate: () => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -384,13 +668,22 @@ function PropertiesPanel({
         <p className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-[color:var(--color-ink-600)]">
           {layer.kind} layer
         </p>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-[color:var(--color-ember-700)] hover:text-[color:var(--color-ember-900)] transition-colors"
-        >
-          Delete
-        </button>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onDuplicate}
+            className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-[color:var(--color-ink-600)] hover:text-[color:var(--color-ink-950)] transition-colors"
+          >
+            Duplicate
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-[color:var(--color-ember-700)] hover:text-[color:var(--color-ember-900)] transition-colors"
+          >
+            Delete
+          </button>
+        </div>
       </div>
 
       {layer.kind === "text" ? (
@@ -402,6 +695,7 @@ function PropertiesPanel({
             <textarea
               value={layer.content}
               onChange={(e) => onChange({ content: e.target.value })}
+              onBlur={(e) => onCommit({ content: e.target.value })}
               rows={3}
               className="w-full px-3 py-2 text-sm bg-[color:var(--color-paper-50)] border border-[color:var(--color-paper-300)] focus:outline-none focus:border-[color:var(--color-ink-800)]"
             />
@@ -412,7 +706,7 @@ function PropertiesPanel({
             </span>
             <select
               value={layer.fontFamily}
-              onChange={(e) => onChange({ fontFamily: e.target.value })}
+              onChange={(e) => onCommit({ fontFamily: e.target.value })}
               className="w-full px-3 py-2 text-sm bg-[color:var(--color-paper-50)] border border-[color:var(--color-paper-300)] focus:outline-none focus:border-[color:var(--color-ink-800)]"
             >
               {FONTS.map((f) => (
@@ -433,6 +727,7 @@ function PropertiesPanel({
                 max={256}
                 value={layer.fontSize}
                 onChange={(e) => onChange({ fontSize: Number(e.target.value) })}
+                onBlur={(e) => onCommit({ fontSize: Number(e.target.value) })}
                 className="w-full px-3 py-2 text-sm bg-[color:var(--color-paper-50)] border border-[color:var(--color-paper-300)] focus:outline-none focus:border-[color:var(--color-ink-800)] nums-tabular"
               />
             </label>
@@ -444,6 +739,7 @@ function PropertiesPanel({
                 type="color"
                 value={layer.color}
                 onChange={(e) => onChange({ color: e.target.value })}
+                onBlur={(e) => onCommit({ color: e.target.value })}
                 className="w-full h-10 bg-[color:var(--color-paper-50)] border border-[color:var(--color-paper-300)] cursor-pointer"
               />
             </label>

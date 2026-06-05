@@ -145,9 +145,11 @@ export const getFeaturedForSlot = unstable_cache(
       .select({
         featured: featuredProducts,
         product: products,
+        variant: productVariants,
       })
       .from(featuredProducts)
       .innerJoin(products, eq(products.id, featuredProducts.productId))
+      .leftJoin(productVariants, eq(productVariants.productId, products.id))
       .where(
         and(
           eq(featuredProducts.slot, slot),
@@ -157,16 +159,26 @@ export const getFeaturedForSlot = unstable_cache(
       .orderBy(asc(featuredProducts.sortOrder));
 
     const now = Date.now();
-    return rows
-      .filter((r) => {
-        const start = r.featured.startsAt?.getTime() ?? -Infinity;
-        const end = r.featured.endsAt?.getTime() ?? Infinity;
-        return start <= now && now <= end;
-      })
-      .map((r) => ({
-        featured: r.featured,
-        product: { ...r.product, variants: [], heroImage: null },
-      }));
+    const byProductId = new Map<
+      string,
+      { featured: FeaturedProduct; product: CatalogProduct }
+    >();
+    for (const r of rows) {
+      const start = r.featured.startsAt?.getTime() ?? -Infinity;
+      const end = r.featured.endsAt?.getTime() ?? Infinity;
+      if (start > now || now > end) continue;
+
+      let entry = byProductId.get(r.product.id);
+      if (!entry) {
+        entry = {
+          featured: r.featured,
+          product: { ...r.product, variants: [], heroImage: null },
+        };
+        byProductId.set(r.product.id, entry);
+      }
+      if (r.variant) entry.product.variants.push(r.variant);
+    }
+    return Array.from(byProductId.values());
   },
   ["catalog", "featured-by-slot"],
   { tags: ["featured", "products"], revalidate: 60 },

@@ -34,11 +34,14 @@ const NAV_GROUPS: Array<{
   },
   {
     label: "Design",
-    items: [{ href: "/admin/design", label: "Design Console", muted: true }],
+    items: [{ href: "/admin/design", label: "Design Console" }],
   },
   {
     label: "Commerce",
-    items: [{ href: "/admin/orders", label: "Orders" }],
+    items: [
+      { href: "/admin/orders", label: "Orders" },
+      { href: "/admin/production", label: "Production board" },
+    ],
   },
 ];
 

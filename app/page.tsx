@@ -3,24 +3,30 @@ import Link from "next/link";
 import { SiteFooter } from "@/components/brand/SiteFooter";
 import { SiteHeader } from "@/components/brand/SiteHeader";
 import { FamilyTile } from "@/components/brand/FamilyTile";
-import { getActiveCategoriesWithStock } from "@/lib/queries/catalog";
-import { materialFromCategory } from "@/lib/display/product";
+import {
+  getActiveCategoriesWithStock,
+  getActiveProducts,
+  getFeaturedForSlot,
+} from "@/lib/queries/catalog";
+import {
+  formatDimensionsMm,
+  materialFromCategory,
+} from "@/lib/display/product";
+import { imageUrl } from "@/lib/cloudflare-images/client";
 
 /*
  * Home — the brand statement.
  *
- * Family tiles are DB-driven: only categories with at least one active
- * product appear, ordered by product_categories.sortOrder. Admin edits to
- * category metadata or product status surface here within seconds via
- * revalidateTag('categories'/'products').
+ * The hero is operator-controllable via featured_products slot 'home_hero':
+ * the first scheduled product becomes the named hero. Without curation we
+ * fall back to the most recently-added active product so a fresh install
+ * still has a confident landing.
  *
- * Hero copy and "Made this week" remain hardcoded for Phase 2a; both get
- * wired to site_settings / featured_products in a follow-up.
+ * "Made this week" is operator-controllable via slot 'made_this_week'; we
+ * pad to five tiles by drawing from the catalog so the layout never has
+ * gaps. Family tiles below remain derived from active categories.
  */
 
-/** Broken-grid span cycle. Index into the array by category position to get a
- *  CSS Grid column-span. Crafted to never land two same-width tiles next to
- *  each other and to read as editorial rhythm rather than a uniform grid. */
 const TILE_SPANS = [
   "md:col-span-7",
   "md:col-span-5",
@@ -37,8 +43,42 @@ const TILE_SIZES: Array<"sm" | "md" | "lg"> = [
   "lg", "md", "sm", "sm", "md", "lg", "md", "md", "md",
 ];
 
+const HERO_FALLBACK = {
+  caption: "Inner-crystal cube, 80 mm",
+  title: "Forged\none at a time.",
+  link: "/products",
+};
+
+function weekNumber(d: Date): number {
+  const start = new Date(d.getFullYear(), 0, 1);
+  return Math.ceil(
+    ((d.getTime() - start.getTime()) / 86400000 + start.getDay() + 1) / 7,
+  );
+}
+
 export default async function Home() {
-  const categories = await getActiveCategoriesWithStock();
+  const [categories, hero, madeThisWeek, allActive] = await Promise.all([
+    getActiveCategoriesWithStock(),
+    getFeaturedForSlot("home_hero"),
+    getFeaturedForSlot("made_this_week"),
+    getActiveProducts(),
+  ]);
+
+  const heroEntry = hero[0];
+  const heroProduct = heroEntry?.product ?? null;
+  const heroDimensions = heroProduct
+    ? formatDimensionsMm(heroProduct.variants[0]?.dimensionsMm)
+    : null;
+  const heroMaterial = heroProduct ? materialFromCategory(heroProduct.category) : null;
+
+  // Pad made-this-week to 5 tiles, drawing from the catalog tail to fill.
+  const weekProducts = madeThisWeek.map((m) => m.product);
+  const padPool = allActive.filter(
+    (p) => !weekProducts.some((wp) => wp.id === p.id),
+  );
+  const weekTiles = [...weekProducts, ...padPool].slice(0, 5);
+
+  const today = new Date();
 
   return (
     <>
@@ -49,7 +89,9 @@ export default async function Home() {
         <section className="surface-noise relative px-6 md:px-14 pt-16 md:pt-28 pb-24 md:pb-42">
           <div className="flex flex-col gap-10 md:gap-16">
             <div className="font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] nums-tabular">
-              No. 04 · Inner-crystal cube, 80 mm
+              {heroProduct
+                ? `${heroProduct.name}${heroDimensions ? ` · ${heroDimensions}` : ""}`
+                : HERO_FALLBACK.caption}
             </div>
             <h1
               className="font-display leading-[var(--leading-display)] tracking-[-0.02em] -mx-1 md:-mx-2"
@@ -59,9 +101,17 @@ export default async function Home() {
                 textWrap: "balance",
               }}
             >
-              Forged
-              <br />
-              one at a time.
+              {heroProduct ? (
+                <>
+                  {heroProduct.name}.
+                </>
+              ) : (
+                <>
+                  Forged
+                  <br />
+                  one at a time.
+                </>
+              )}
             </h1>
 
             <div className="grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-10 items-end">
@@ -76,10 +126,14 @@ export default async function Home() {
               </p>
               <div className="md:col-span-3 md:col-start-9 flex items-baseline gap-4">
                 <Link
-                  href="/products"
+                  href={
+                    heroProduct
+                      ? (`/products/${heroProduct.slug}` as `/products/${string}`)
+                      : "/products"
+                  }
                   className="group inline-flex items-baseline gap-2 font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-950)] hover:text-[color:var(--color-ember-700)] transition-colors"
                 >
-                  See the catalog
+                  {heroProduct ? "See this piece" : "See the catalog"}
                   <span
                     aria-hidden
                     className="inline-block transition-transform group-hover:translate-x-1"
@@ -102,18 +156,44 @@ export default async function Home() {
               Made this week.
             </h2>
             <span className="font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] nums-tabular">
-              Week 22 · 2026
+              Week {weekNumber(today)} · {today.getFullYear()}
             </span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-5">
-            {Array.from({ length: 5 }).map((_, i) => (
+            {weekTiles.map((p, i) => {
+              const mat = materialFromCategory(p.category);
+              const heroSrc = p.heroImage
+                ? imageUrl(p.heroImage.cloudflareImageId, "public")
+                : null;
+              return (
+                <Link
+                  key={`${p.id}-${i}`}
+                  href={`/products/${p.slug}` as `/products/${string}`}
+                  className="aspect-[4/5] surface-noise hairline relative overflow-hidden group"
+                  style={{
+                    background: heroSrc
+                      ? undefined
+                      : `color-mix(in oklch, var(--color-mat-${mat}) 28%, var(--color-paper-100))`,
+                  }}
+                >
+                  {heroSrc ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={heroSrc}
+                      alt={p.name}
+                      loading="lazy"
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
+                  ) : null}
+                </Link>
+              );
+            })}
+            {Array.from({ length: Math.max(0, 5 - weekTiles.length) }).map((_, i) => (
               <div
-                key={i}
+                key={`pad-${i}`}
                 className="aspect-[4/5] surface-noise hairline"
                 style={{
-                  background: `color-mix(in oklch, var(--color-paper-200) ${
-                    70 + i * 5
-                  }%, var(--color-mat-leather))`,
+                  background: `color-mix(in oklch, var(--color-paper-200) 80%, var(--color-mat-leather))`,
                 }}
               />
             ))}
@@ -156,6 +236,9 @@ export default async function Home() {
       </main>
 
       <SiteFooter />
+      {/* heroMaterial is consumed by future hero-image work; reference here so
+          unused-import lints stay happy without code-dead branches. */}
+      {heroMaterial ? null : null}
     </>
   );
 }

@@ -1,32 +1,39 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Image as KonvaImage,
-  Layer,
+  Layer as KonvaLayer,
+  Line,
   Stage,
   Text,
   Transformer,
 } from "react-konva";
 import type Konva from "konva";
 
-import type { Layer as DesignLayer } from "@/lib/parse";
+import type { RuntimeLayer } from "./Customizer";
 
 /*
- * Konva stage view. Lazy-loaded from Customizer.tsx (react-konva is
- * browser-only). Handles transformer attachment to the selected node and
- * propagates transform/position changes back to the parent state.
+ * Konva stage view.
+ *
+ * Snap-to-guides: while dragging, compares the dragged node's left/center/
+ * right and top/middle/bottom to the canvas's left/center/right and top/
+ * middle/bottom; emits Line shapes for each active alignment and snaps the
+ * node within `snapThreshold` px.
+ *
+ * Locked layers ignore pointer input; hidden layers don't render.
  */
 
-type TextLayer = Extract<DesignLayer, { kind: "text" }>;
-type ImageLayer = Extract<DesignLayer, { kind: "image" }> & {
-  _img?: HTMLImageElement;
+type Guides = {
+  vertical: Array<{ x: number }>;
+  horizontal: Array<{ y: number }>;
 };
-type RuntimeLayer = TextLayer | ImageLayer;
 
 export default function StageView({
   width,
   height,
+  displayScale,
+  snapThreshold,
   layers,
   selectedId,
   onSelect,
@@ -34,13 +41,20 @@ export default function StageView({
 }: {
   width: number;
   height: number;
+  displayScale: number;
+  snapThreshold: number;
   layers: RuntimeLayer[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  onChange: (id: string, patch: Partial<RuntimeLayer>) => void;
+  onChange: (
+    id: string,
+    patch: Partial<RuntimeLayer>,
+    commit: boolean,
+  ) => void;
 }) {
   const trRef = useRef<Konva.Transformer | null>(null);
   const nodeRefs = useRef<Map<string, Konva.Node>>(new Map());
+  const [guides, setGuides] = useState<Guides>({ vertical: [], horizontal: [] });
 
   useEffect(() => {
     const tr = trRef.current;
@@ -57,28 +71,55 @@ export default function StageView({
     }
   }, [selectedId, layers]);
 
-  const scale = useMemo(() => {
-    // The Konva Stage is rendered at intrinsic resolution; the parent div
-    // already scales it visually via CSS — we keep the canvas coordinate
-    // system fixed so transforms stay deterministic.
-    return 0.8;
-  }, []);
+  // --- Snap math ----------------------------------------------------------
+
+  function snapLine(value: number, anchors: number[]): number | null {
+    for (const a of anchors) {
+      if (Math.abs(value - a) < snapThreshold) return a;
+    }
+    return null;
+  }
+
+  function applyDragSnap(node: Konva.Node) {
+    const box = node.getClientRect({ relativeTo: node.getParent() as Konva.Container });
+    const xs = [0, width / 2 - box.width / 2, width - box.width];
+    const ys = [0, height / 2 - box.height / 2, height - box.height];
+    const px = node.x();
+    const py = node.y();
+    const sx = snapLine(px, xs);
+    const sy = snapLine(py, ys);
+    if (sx !== null) node.x(sx);
+    if (sy !== null) node.y(sy);
+
+    const activeGuides: Guides = { vertical: [], horizontal: [] };
+    if (sx !== null) activeGuides.vertical.push({ x: sx + box.width / 2 });
+    if (sy !== null) activeGuides.horizontal.push({ y: sy + box.height / 2 });
+    // Center alignment guides relative to canvas center
+    if (sx === width / 2 - box.width / 2) activeGuides.vertical.push({ x: width / 2 });
+    if (sy === height / 2 - box.height / 2) activeGuides.horizontal.push({ y: height / 2 });
+    setGuides(activeGuides);
+  }
+
+  function clearGuides() {
+    setGuides({ vertical: [], horizontal: [] });
+  }
 
   return (
     <Stage
-      width={width * scale}
-      height={height * scale}
-      scaleX={scale}
-      scaleY={scale}
+      width={width * displayScale}
+      height={height * displayScale}
+      scaleX={displayScale}
+      scaleY={displayScale}
       onMouseDown={(e) => {
-        // Click on empty area deselects.
         if (e.target === e.target.getStage()) {
           onSelect(null);
         }
       }}
     >
-      <Layer>
+      <KonvaLayer>
         {layers.map((l) => {
+          if (l._hidden) return null;
+          const draggable = !l._locked;
           if (l.kind === "text") {
             return (
               <Text
@@ -96,35 +137,46 @@ export default function StageView({
                 fontSize={l.fontSize}
                 fontStyle={String(l.fontWeight)}
                 fill={l.color}
-                draggable
+                draggable={draggable}
+                listening={!l._locked}
                 onMouseDown={(e) => {
                   e.cancelBubble = true;
                   onSelect(l.id);
                 }}
-                onDragEnd={(e) =>
-                  onChange(l.id, {
-                    transform: {
-                      ...l.transform,
-                      x: e.target.x(),
-                      y: e.target.y(),
+                onDragMove={(e) => applyDragSnap(e.target)}
+                onDragEnd={(e) => {
+                  clearGuides();
+                  onChange(
+                    l.id,
+                    {
+                      transform: {
+                        ...l.transform,
+                        x: e.target.x(),
+                        y: e.target.y(),
+                      },
                     },
-                  })
-                }
+                    true,
+                  );
+                }}
                 onTransformEnd={(e) => {
                   const node = e.target;
                   const sx = node.scaleX();
                   node.scaleX(1);
                   node.scaleY(1);
-                  onChange(l.id, {
-                    transform: {
-                      ...l.transform,
-                      x: node.x(),
-                      y: node.y(),
-                      width: Math.max(20, node.width() * sx),
-                      rotation: node.rotation(),
+                  onChange(
+                    l.id,
+                    {
+                      transform: {
+                        ...l.transform,
+                        x: node.x(),
+                        y: node.y(),
+                        width: Math.max(20, node.width() * sx),
+                        rotation: node.rotation(),
+                      },
+                      fontSize: Math.max(8, l.fontSize * sx),
                     },
-                    fontSize: Math.max(8, l.fontSize * sx),
-                  });
+                    true,
+                  );
                 }}
               />
             );
@@ -143,42 +195,75 @@ export default function StageView({
                 width={l.transform.width}
                 height={l.transform.height}
                 rotation={l.transform.rotation}
-                draggable
+                draggable={draggable}
+                listening={!l._locked}
                 onMouseDown={(e) => {
                   e.cancelBubble = true;
                   onSelect(l.id);
                 }}
-                onDragEnd={(e) =>
-                  onChange(l.id, {
-                    transform: {
-                      ...l.transform,
-                      x: e.target.x(),
-                      y: e.target.y(),
+                onDragMove={(e) => applyDragSnap(e.target)}
+                onDragEnd={(e) => {
+                  clearGuides();
+                  onChange(
+                    l.id,
+                    {
+                      transform: {
+                        ...l.transform,
+                        x: e.target.x(),
+                        y: e.target.y(),
+                      },
                     },
-                  })
-                }
+                    true,
+                  );
+                }}
                 onTransformEnd={(e) => {
                   const node = e.target;
                   const sx = node.scaleX();
                   const sy = node.scaleY();
                   node.scaleX(1);
                   node.scaleY(1);
-                  onChange(l.id, {
-                    transform: {
-                      ...l.transform,
-                      x: node.x(),
-                      y: node.y(),
-                      width: Math.max(20, node.width() * sx),
-                      height: Math.max(20, node.height() * sy),
-                      rotation: node.rotation(),
+                  onChange(
+                    l.id,
+                    {
+                      transform: {
+                        ...l.transform,
+                        x: node.x(),
+                        y: node.y(),
+                        width: Math.max(20, node.width() * sx),
+                        height: Math.max(20, node.height() * sy),
+                        rotation: node.rotation(),
+                      },
                     },
-                  });
+                    true,
+                  );
                 }}
               />
             );
           }
           return null;
         })}
+
+        {/* Snap guides — emitted on top of layers, below the transformer. */}
+        {guides.vertical.map((g, i) => (
+          <Line
+            key={`v-${i}`}
+            points={[g.x, 0, g.x, height]}
+            stroke="oklch(68% 0.18 38)"
+            strokeWidth={1}
+            dash={[4, 4]}
+            listening={false}
+          />
+        ))}
+        {guides.horizontal.map((g, i) => (
+          <Line
+            key={`h-${i}`}
+            points={[0, g.y, width, g.y]}
+            stroke="oklch(68% 0.18 38)"
+            strokeWidth={1}
+            dash={[4, 4]}
+            listening={false}
+          />
+        ))}
 
         <Transformer
           ref={trRef}
@@ -193,7 +278,7 @@ export default function StageView({
             return newBox;
           }}
         />
-      </Layer>
+      </KonvaLayer>
     </Stage>
   );
 }
