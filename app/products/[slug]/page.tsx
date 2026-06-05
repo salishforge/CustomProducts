@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 
+import { MorphLink } from "@/components/brand/view-transitions";
 import { SiteFooter } from "@/components/brand/SiteFooter";
 import { SiteHeader } from "@/components/brand/SiteHeader";
 import { db } from "@/lib/db/client";
@@ -48,12 +49,12 @@ export default async function ProductDetail({
     <>
       <SiteHeader />
       <main className="px-6 md:px-14 pt-8 md:pt-12 pb-16">
-        <Link
+        <MorphLink
           href="/products"
           className="font-mono text-xs uppercase tracking-[0.22em] text-[color:var(--color-ink-600)] hover:text-[color:var(--color-ink-950)] transition-colors"
         >
           ← Catalog
-        </Link>
+        </MorphLink>
 
         <article className="mt-10 md:mt-16 grid grid-cols-1 md:grid-cols-12 gap-10 md:gap-16">
           {/* Hero photo — Cloudflare Images when present, else material-tinted placeholder. */}

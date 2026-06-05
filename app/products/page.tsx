@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { MorphLink } from "@/components/brand/view-transitions";
 
 import { SiteFooter } from "@/components/brand/SiteFooter";
 import { SiteHeader } from "@/components/brand/SiteHeader";
@@ -57,10 +57,9 @@ export default async function CatalogPage() {
                 : null;
               return (
                 <li key={product.slug} className={span}>
-                  <Link
+                  <MorphLink
                     href={`/products/${product.slug}` as `/products/${string}`}
                     className="group block"
-                    style={{ viewTransitionName: `product-${product.slug}` }}
                   >
                     <div
                       className="surface-noise hairline aspect-[4/5] mb-5 overflow-hidden transition-transform duration-[var(--duration-slow)] ease-[var(--ease-out-craft)] group-hover:-translate-y-1"
@@ -68,6 +67,7 @@ export default async function CatalogPage() {
                         background: heroSrc
                           ? undefined
                           : `color-mix(in oklch, var(--color-mat-${material}) 22%, var(--color-paper-100))`,
+                        viewTransitionName: `product-${product.slug}`,
                       }}
                     >
                       {heroSrc ? (
@@ -97,7 +97,7 @@ export default async function CatalogPage() {
                       {dimensions ? `${dimensions} · ` : ""}
                       {displayDecoration(product.decorationMethod)}
                     </p>
-                  </Link>
+                  </MorphLink>
                 </li>
               );
             })}

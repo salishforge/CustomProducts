@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { CSSProperties } from "react";
 import "./globals.css";
 import { fontVariables } from "./fonts";
+import { ViewTransitions } from "@/components/brand/view-transitions";
 import { getActiveTheme } from "@/lib/theme/resolve";
 
 export const metadata: Metadata = {
@@ -37,7 +38,9 @@ export default async function RootLayout({
 
   return (
     <html lang="en" className={fontVariables} style={styleVars}>
-      <body className="min-h-dvh antialiased">{children}</body>
+      <body className="min-h-dvh antialiased">
+        <ViewTransitions>{children}</ViewTransitions>
+      </body>
     </html>
   );
 }

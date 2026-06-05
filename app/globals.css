@@ -162,6 +162,20 @@ html, body {
   }
 }
 
+/* Product card ↔ PDP morph. Paired elements carry the same
+   view-transition-name (product-<slug>) on the card image and the PDP
+   hero, so the API tweens their boxes while everything else cross-fades.
+   Tuned to the craft easing; the reduced-motion block above already zeroes
+   these durations, and unsupported browsers ignore the pseudo-elements. */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: var(--duration-slow);
+    animation-timing-function: var(--ease-out-craft);
+  }
+}
+
 /* Subtle paper noise on large light surfaces. Imperceptible until removed,
    at which point the page goes flat and digital. Applied via class. */
 .surface-noise {
