@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import { designStateSchema, layerSchema } from "../lib/parse";
 import {
+  createMockupTemplateSchema,
   createDecorationZoneSchema,
+  mockupOverlayConfigSchema,
   zoneGeometrySchema,
   zonePrintSpecSchema,
 } from "../lib/parse/admin";
@@ -148,6 +150,87 @@ describe("createDecorationZoneSchema", () => {
       kind: "mixed",
       geometry: { shape: "rect", x: 0, y: 0, width: 100, height: 100 },
       printSpec: { dpi: 300 },
+    });
+    assert.equal(result.success, false);
+  });
+});
+
+const overlay = {
+  baseWidth: 1200,
+  baseHeight: 1200,
+  zones: [
+    {
+      zoneId: "zone_1",
+      corners: { tl: [0, 0], tr: [10, 0], br: [10, 10], bl: [0, 10] },
+    },
+  ],
+};
+
+describe("mockupOverlayConfigSchema", () => {
+  it("defaults a zone's opacity and blend mode", () => {
+    const parsed = mockupOverlayConfigSchema.parse(overlay);
+    assert.equal(parsed.zones[0]?.opacity, 1);
+    assert.equal(parsed.zones[0]?.blendMode, "multiply");
+  });
+
+  it("accepts an empty zones array", () => {
+    const result = mockupOverlayConfigSchema.safeParse({
+      baseWidth: 800,
+      baseHeight: 800,
+      zones: [],
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("rejects a non-positive base dimension", () => {
+    const result = mockupOverlayConfigSchema.safeParse({ ...overlay, baseWidth: 0 });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a corner that is not an [x, y] pair", () => {
+    const result = mockupOverlayConfigSchema.safeParse({
+      ...overlay,
+      zones: [{ zoneId: "z", corners: { tl: [0], tr: [1, 0], br: [1, 1], bl: [0, 1] } }],
+    });
+    assert.equal(result.success, false);
+  });
+});
+
+describe("createMockupTemplateSchema", () => {
+  it("parses a 2D overlay template without a 3D model url", () => {
+    const result = createMockupTemplateSchema.safeParse({
+      variantId: "var_1",
+      overlayConfig: overlay,
+      format: "2d_overlay",
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("requires an r3fModelUrl when the format is 3d_r3f", () => {
+    const result = createMockupTemplateSchema.safeParse({
+      variantId: "var_1",
+      overlayConfig: overlay,
+      format: "3d_r3f",
+    });
+    assert.equal(result.success, false);
+  });
+
+  it("accepts a 3D template with a valid model url", () => {
+    const result = createMockupTemplateSchema.safeParse({
+      variantId: "var_1",
+      overlayConfig: overlay,
+      format: "3d_r3f",
+      r3fModelUrl: "https://cdn.salishforge.com/models/tumbler.glb",
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("rejects a malformed model url", () => {
+    const result = createMockupTemplateSchema.safeParse({
+      variantId: "var_1",
+      overlayConfig: overlay,
+      format: "3d_r3f",
+      r3fModelUrl: "not-a-url",
     });
     assert.equal(result.success, false);
   });

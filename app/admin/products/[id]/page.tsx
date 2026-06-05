@@ -108,7 +108,12 @@ export default async function EditProductPage({
             </Link>
           </li>
           <li className="pb-3 text-[color:var(--color-ink-400)]">
-            Mock-up <span className="ml-2 text-[0.6rem]">soon</span>
+            <Link
+              href={`/admin/products/${product.id}/mockup` as never}
+              className="hover:text-[color:var(--color-ink-800)] transition-colors"
+            >
+              Mock-up
+            </Link>
           </li>
         </ul>
       </nav>

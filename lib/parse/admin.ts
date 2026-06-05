@@ -180,3 +180,74 @@ export const updateDecorationZoneSchema = createDecorationZoneSchema
 export const deleteDecorationZoneSchema = z.object({
   id: z.string().min(1),
 });
+
+// -----------------------------------------------------------------------------
+// Mock-up templates
+//
+// overlay_config is a jsonb column describing how a variant's decoration zones
+// project onto its product photo. Until the Phase 2b visual calibrator lands,
+// the admin edits it as raw JSON validated against the schema below. A 2D
+// overlay maps each zone's rectangular art onto a destination quad in the base
+// image's pixel space (a perspective warp) and optionally composites shadow /
+// highlight masks for realism; a 3D template instead points at a GLB model.
+// -----------------------------------------------------------------------------
+
+const mockupFormatValues = ["2d_overlay", "3d_r3f"] as const;
+
+/** A destination point in base-image pixels: [x, y]. */
+const mockupPointSchema = z.tuple([z.number(), z.number()]);
+
+const mockupZoneOverlaySchema = z.object({
+  zoneId: z.string().min(1),
+  /** Destination quad in base-image px: top-left, top-right, bottom-right, bottom-left. */
+  corners: z.object({
+    tl: mockupPointSchema,
+    tr: mockupPointSchema,
+    br: mockupPointSchema,
+    bl: mockupPointSchema,
+  }),
+  opacity: z.number().min(0).max(1).default(1),
+  blendMode: z
+    .enum(["normal", "multiply", "screen", "overlay"])
+    .default("multiply"),
+});
+
+export const mockupOverlayConfigSchema = z.object({
+  baseWidth: z.number().int().positive(),
+  baseHeight: z.number().int().positive(),
+  zones: z.array(mockupZoneOverlaySchema),
+  shadowMaskImageId: z.string().nullable().optional(),
+  highlightMaskImageId: z.string().nullable().optional(),
+});
+export type MockupOverlayConfig = z.infer<typeof mockupOverlayConfigSchema>;
+
+const mockupTemplateBaseSchema = z.object({
+  variantId: z.string().min(1).nullable().optional(),
+  baseImageId: z.string().min(1).nullable().optional(),
+  overlayConfig: mockupOverlayConfigSchema,
+  format: z.enum(mockupFormatValues).default("2d_overlay"),
+  r3fModelUrl: z.string().url().nullable().optional(),
+});
+
+/** A 3D template is meaningless without a model URL to load. */
+const mockupTemplateNeeds3dModel = (t: {
+  format?: (typeof mockupFormatValues)[number];
+  r3fModelUrl?: string | null;
+}) => t.format !== "3d_r3f" || Boolean(t.r3fModelUrl);
+const mockupTemplate3dRefinement = {
+  message: "A 3D (r3f) template needs an r3fModelUrl pointing at a GLB.",
+  path: ["r3fModelUrl"],
+};
+
+export const createMockupTemplateSchema = mockupTemplateBaseSchema.refine(
+  mockupTemplateNeeds3dModel,
+  mockupTemplate3dRefinement,
+);
+
+export const updateMockupTemplateSchema = mockupTemplateBaseSchema
+  .extend({ id: z.string().min(1) })
+  .refine(mockupTemplateNeeds3dModel, mockupTemplate3dRefinement);
+
+export const deleteMockupTemplateSchema = z.object({
+  id: z.string().min(1),
+});
