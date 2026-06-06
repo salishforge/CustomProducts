@@ -55,6 +55,15 @@ describe("buildSvg", () => {
     assert.match(svg, /A &amp; B &lt; C &gt; D/);
   });
 
+  it("escapes a quote in font-family so it can't break out of the attribute", () => {
+    const svg = buildSvg([textLayer({ fontFamily: 'Ev"il' })], {
+      widthMm: 90,
+      heightMm: 80,
+    });
+    assert.match(svg, /font-family="Ev&quot;il"/);
+    assert.doesNotMatch(svg, /font-family="Ev"il"/);
+  });
+
   it("embeds an image layer as a base64 data URI", () => {
     const svg = buildSvg([imageLayer()], { widthMm: 90, heightMm: 80 });
     assert.match(svg, /href="data:image\/png;base64,AQID"/);
