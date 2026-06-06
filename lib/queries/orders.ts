@@ -2,7 +2,7 @@
  * Order read helpers for customer-facing pages.
  */
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { db } from "@/lib/db/client";
 import {
@@ -46,15 +46,13 @@ export async function getOrderWithItems(
     .where(eq(orderItems.orderId, orderId));
 
   const itemIds = items.map((i) => i.id);
-  const stages: ProductionStage[] = [];
-  for (const itemId of itemIds) {
-    const rows = await db
-      .select()
-      .from(productionStages)
-      .where(eq(productionStages.orderItemId, itemId))
-      .orderBy(desc(productionStages.enteredAt));
-    stages.push(...rows);
-  }
+  const stages = itemIds.length
+    ? await db
+        .select()
+        .from(productionStages)
+        .where(inArray(productionStages.orderItemId, itemIds))
+        .orderBy(desc(productionStages.enteredAt))
+    : [];
 
   return { order, items, stages };
 }
