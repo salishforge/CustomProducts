@@ -28,6 +28,8 @@ yarn-error.log*
 
 nohup.out
 
-# Local fixture storage (dev image uploads + generated print files)
-upload-fixtures/
-print-fixtures/
+# Local fixture storage (dev image uploads + generated print files).
+# Root-anchored so the runtime dirs at repo root are ignored without
+# shadowing source dirs of the same name (e.g. app/api/admin/print-fixtures/).
+/upload-fixtures/
+/print-fixtures/
