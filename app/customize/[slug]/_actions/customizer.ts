@@ -98,7 +98,8 @@ export async function generateForCustomizerAction(input: {
 }
 
 export async function pollGenerationStatusAction(generationId: string) {
-  return getGenerationStatus(generationId);
+  const session = await getSession().catch(() => null);
+  return getGenerationStatus(generationId, session?.user?.id ?? null);
 }
 
 export async function publishDraftPreviewAction(_draftId: string): Promise<void> {

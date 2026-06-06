@@ -98,6 +98,18 @@ export async function setHeroImageAction(formData: FormData): Promise<void> {
   if (typeof productId !== "string" || typeof imageId !== "string") {
     throw new AdminValidationError({ form: ["Missing fields"] });
   }
+
+  // The hero image must be one of this product's own images — otherwise a
+  // stray id would point a product's hero at another product's asset.
+  const [img] = await db
+    .select({ id: productImages.id })
+    .from(productImages)
+    .where(and(eq(productImages.id, imageId), eq(productImages.productId, productId)))
+    .limit(1);
+  if (!img) {
+    throw new AdminValidationError({ form: ["Image does not belong to product"] });
+  }
+
   await db
     .update(products)
     .set({ heroImageId: imageId, updatedAt: new Date() })

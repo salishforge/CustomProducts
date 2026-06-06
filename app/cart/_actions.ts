@@ -13,7 +13,7 @@ import {
   products,
 } from "@/drizzle/schema";
 import { getSession } from "@/lib/auth";
-import { getOrCreateCart } from "@/lib/cart/session";
+import { findCurrentCart, getOrCreateCart } from "@/lib/cart/session";
 
 export async function addDraftToCartAction(formData: FormData): Promise<void> {
   const draftId = formData.get("draftId");
@@ -32,6 +32,12 @@ export async function addDraftToCartAction(formData: FormData): Promise<void> {
     .where(eq(designDrafts.id, draftId))
     .limit(1);
   if (!draft) throw new Error("Draft not found");
+  // Owned drafts may only be added by their owner; guest drafts (null owner)
+  // are bearer-claimable by whoever holds the draft id. Report a mismatch as
+  // not-found rather than forbidden so we don't confirm the draft exists.
+  if (draft.customerId && draft.customerId !== customerId) {
+    throw new Error("Draft not found");
+  }
 
   const [variant] = await db
     .select()
@@ -75,10 +81,14 @@ export async function updateCartItemQuantityAction(formData: FormData): Promise<
   if (typeof id !== "string") throw new Error("Missing cartItemId");
   const quantity = Math.max(1, Math.min(99, Number(quantityRaw ?? 1)));
 
+  const session = await getSession().catch(() => null);
+  const cart = await findCurrentCart(session?.user?.id ?? null);
+  if (!cart) return;
+
   await db
     .update(cartItems)
     .set({ quantity })
-    .where(eq(cartItems.id, id));
+    .where(and(eq(cartItems.id, id), eq(cartItems.cartId, cart.id)));
 
   revalidatePath("/cart");
 }
@@ -87,7 +97,13 @@ export async function removeCartItemAction(formData: FormData): Promise<void> {
   const id = formData.get("cartItemId");
   if (typeof id !== "string") throw new Error("Missing cartItemId");
 
-  await db.delete(cartItems).where(eq(cartItems.id, id));
+  const session = await getSession().catch(() => null);
+  const cart = await findCurrentCart(session?.user?.id ?? null);
+  if (!cart) return;
+
+  await db
+    .delete(cartItems)
+    .where(and(eq(cartItems.id, id), eq(cartItems.cartId, cart.id)));
   revalidatePath("/cart");
 }
 

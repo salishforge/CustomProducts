@@ -30,7 +30,13 @@ export async function GET(
   await requireAdmin();
   const { orderId, itemId, filename } = await ctx.params;
 
-  // Defensive: reject any path traversal.
+  // Defensive: every path segment is attacker-influenced. orderId/itemId are
+  // cuid2 ids (lowercase alphanumeric) — anything else can't be a real path
+  // and may be a traversal attempt. filename is checked for separators.
+  const CUID2 = /^[a-z0-9]+$/;
+  if (!CUID2.test(orderId) || !CUID2.test(itemId)) {
+    return new NextResponse("Bad request", { status: 400 });
+  }
   if (filename.includes("/") || filename.includes("..")) {
     return new NextResponse("Bad filename", { status: 400 });
   }

@@ -17,6 +17,7 @@ export type GenerationStatusResult =
 
 export async function getGenerationStatus(
   generationId: string,
+  callerId: string | null,
 ): Promise<GenerationStatusResult | null> {
   const [row] = await db
     .select()
@@ -24,6 +25,12 @@ export async function getGenerationStatus(
     .where(eq(aiGenerations.id, generationId))
     .limit(1);
   if (!row) return null;
+
+  // Ownership: a customer may only poll their own generations. Guest
+  // generations (null owner) stay pollable by whoever holds the id — the
+  // client that created it. A mismatch is reported as not-found so the
+  // endpoint never leaks the existence of another customer's generation.
+  if (row.customerId !== null && row.customerId !== callerId) return null;
 
   if (row.status === "queued" || row.status === "running") {
     return { status: row.status };
