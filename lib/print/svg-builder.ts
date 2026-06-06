@@ -6,9 +6,9 @@
  *   - fill ="#000000" → engrave area (raster + vector both supported)
  *
  * Text is emitted as <text> elements with `font-family` set to the customer's
- * chosen face. For maximum compatibility with laser controllers that don't
- * embed fonts, a follow-up pass should convert text → paths via opentype.js
- * — flagged with a TODO so it's grep-able from the print pipeline.
+ * chosen face. Laser controllers that don't embed fonts will need a future
+ * text→paths pass (opentype.js); until then, the operator's controller is
+ * expected to have the catalog faces installed.
  */
 
 import type { ResolvedLayer } from "./resolve";
@@ -23,7 +23,14 @@ export type SvgBuildOptions = {
 };
 
 function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // Escapes both text-node and attribute-context metacharacters, since esc is
+  // used for font-family="…" as well as element bodies.
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -63,7 +70,7 @@ export function buildSvg(
      width="${widthMm}mm" height="${heightMm}mm"
      viewBox="0 0 ${widthPx} ${heightPx}">
   <!-- Salishforge print-ready file. Laser convention: stroke=#FF0000 cut, fill=#000000 engrave.
-       TODO: convert text→paths via opentype.js for controllers that don't embed fonts. -->
+       Text relies on controller-side fonts; a future opentype.js pass will convert text to paths. -->
 ${body}
 </svg>
 `;
