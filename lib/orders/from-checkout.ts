@@ -101,74 +101,85 @@ export async function createOrderFromCheckoutSession(
       }
     : null;
 
-  // Use ON CONFLICT DO NOTHING on the unique stripe_payment_intent_id index
-  // for idempotency against duplicate webhook deliveries.
-  const inserted = await db
-    .insert(orders)
-    .values({
-      id: orderId,
-      customerId,
-      orderNumber,
-      status: "paid",
-      subtotalCents,
-      taxCents,
-      shippingCents,
-      totalCents,
-      stripePaymentIntentId:
-        typeof cs.payment_intent === "string" ? cs.payment_intent : cs.payment_intent?.id ?? null,
-      stripeCheckoutSessionId: cs.id,
-      shippingAddress,
-      billingAddress: null,
-      placedAt: new Date(),
-      paidAt: new Date(),
-    })
-    .onConflictDoNothing({ target: orders.stripePaymentIntentId })
-    .returning({ id: orders.id });
+  // Order creation is transactional: the order row, its items, draft-status
+  // updates, and cart conversion commit together or not at all. Without it, a
+  // mid-loop failure would leave a paid order with partial items and an
+  // un-converted cart. ON CONFLICT DO NOTHING on the unique
+  // stripe_payment_intent_id index makes a duplicate webhook delivery a no-op;
+  // an order_number collision (TOCTOU on nextOrderNumber) throws, rolls the
+  // whole order back, and Stripe's retry recomputes a fresh number.
+  const resolvedOrderId = await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(orders)
+      .values({
+        id: orderId,
+        customerId,
+        orderNumber,
+        status: "paid",
+        subtotalCents,
+        taxCents,
+        shippingCents,
+        totalCents,
+        stripePaymentIntentId:
+          typeof cs.payment_intent === "string" ? cs.payment_intent : cs.payment_intent?.id ?? null,
+        stripeCheckoutSessionId: cs.id,
+        shippingAddress,
+        billingAddress: null,
+        placedAt: new Date(),
+        paidAt: new Date(),
+      })
+      .onConflictDoNothing({ target: orders.stripePaymentIntentId })
+      .returning({ id: orders.id });
 
-  const resolvedOrderId = inserted[0]?.id;
-  if (!resolvedOrderId) {
-    // Duplicate webhook — order already exists.
-    return null;
-  }
+    const oid = inserted[0]?.id;
+    // Duplicate webhook — order already exists; commit the empty txn.
+    if (!oid) return null;
 
-  for (const line of lines) {
-    const unitPriceCents = line.item.unitPriceCents;
-    const lineTotalCents = unitPriceCents * line.item.quantity;
-    await db.insert(orderItems).values({
-      id: newId(),
-      orderId: resolvedOrderId,
-      productVariantId: line.variant.id,
-      quantity: line.item.quantity,
-      unitPriceCents,
-      lineTotalCents,
-      productSnapshot: {
-        name: line.product.name,
-        slug: line.product.slug,
-        category: line.product.category,
-        decorationMethod: line.product.decorationMethod,
-        sku: line.variant.sku,
-        variantName: line.variant.name,
-        attributes: line.variant.attributes,
-        dimensionsMm: line.variant.dimensionsMm,
-        weightGrams: line.variant.weightGrams,
-      },
-      customizationSnapshot: line.draft?.designState ?? null,
-      productionStatus: "pending",
-    });
+    for (const line of lines) {
+      const unitPriceCents = line.item.unitPriceCents;
+      const lineTotalCents = unitPriceCents * line.item.quantity;
+      await tx.insert(orderItems).values({
+        id: newId(),
+        orderId: oid,
+        productVariantId: line.variant.id,
+        quantity: line.item.quantity,
+        unitPriceCents,
+        lineTotalCents,
+        productSnapshot: {
+          name: line.product.name,
+          slug: line.product.slug,
+          category: line.product.category,
+          decorationMethod: line.product.decorationMethod,
+          sku: line.variant.sku,
+          variantName: line.variant.name,
+          attributes: line.variant.attributes,
+          dimensionsMm: line.variant.dimensionsMm,
+          weightGrams: line.variant.weightGrams,
+        },
+        customizationSnapshot: line.draft?.designState ?? null,
+        productionStatus: "pending",
+      });
 
-    if (line.draft) {
-      await db
-        .update(designDrafts)
-        .set({ status: "converted_to_order" })
-        .where(eq(designDrafts.id, line.draft.id));
+      if (line.draft) {
+        await tx
+          .update(designDrafts)
+          .set({ status: "converted_to_order" })
+          .where(eq(designDrafts.id, line.draft.id));
+      }
     }
-  }
 
-  await db
-    .update(carts)
-    .set({ status: "converted", updatedAt: new Date() })
-    .where(and(eq(carts.id, cartId), eq(carts.status, "open")));
+    await tx
+      .update(carts)
+      .set({ status: "converted", updatedAt: new Date() })
+      .where(and(eq(carts.id, cartId), eq(carts.status, "open")));
 
+    return oid;
+  });
+
+  if (!resolvedOrderId) return null;
+
+  // Fan out only after the order is durably committed, so a rolled-back order
+  // never triggers print-file generation or the confirmation email.
   await inngest.send({
     name: "order.paid",
     data: { orderId: resolvedOrderId },
