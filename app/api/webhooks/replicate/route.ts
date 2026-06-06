@@ -15,10 +15,6 @@
 
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
-async function sha256Hex(input: string): Promise<string> {
-  return createHash("sha256").update(input).digest("hex");
-}
-
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
@@ -34,6 +30,10 @@ import { inngest } from "@/inngest/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function sha256Hex(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
+}
 
 function verifySignature(rawBody: string, header: string | null): boolean {
   const secret = process.env.REPLICATE_WEBHOOK_SECRET;
@@ -95,7 +95,7 @@ export async function POST(request: Request): Promise<Response> {
       const assetId = newId();
       // content_hash is computed from the URL itself in this interim mode;
       // real content addressing arrives with the R2 download pipeline.
-      const contentHash = await sha256Hex(outputUrl);
+      const contentHash = sha256Hex(outputUrl);
       await db.insert(uploadedAssets).values({
         id: assetId,
         customerId: generation.customerId,

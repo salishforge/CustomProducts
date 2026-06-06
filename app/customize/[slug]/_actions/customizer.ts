@@ -3,7 +3,6 @@
 import { createHash } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
 import sharp from "sharp";
 
 import { db } from "@/lib/db/client";
@@ -100,11 +99,6 @@ export async function generateForCustomizerAction(input: {
 export async function pollGenerationStatusAction(generationId: string) {
   const session = await getSession().catch(() => null);
   return getGenerationStatus(generationId, session?.user?.id ?? null);
-}
-
-export async function publishDraftPreviewAction(_draftId: string): Promise<void> {
-  // Hook for future SSE/preview-bus integration. No-op for MVP.
-  revalidatePath("/cart");
 }
 
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
