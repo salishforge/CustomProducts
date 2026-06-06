@@ -511,8 +511,8 @@ export const orderItems = pgTable(
     lineTotalCents: cents("line_total_cents"),
     /** Product name, SKU, attributes, dimensions, weight at time of purchase. */
     productSnapshot: jsonb("product_snapshot").notNull(),
-    /** Frozen design_drafts.design_state. */
-    customizationSnapshot: jsonb("customization_snapshot").notNull(),
+    /** Frozen design_drafts.design_state; null for "buy as shown" lines. */
+    customizationSnapshot: jsonb("customization_snapshot"),
     mockupImageId: fkOptional("mockup_image_id"),
     /** [{kind:'pdf'|'svg'|'png'|'depth_map', r2_key, generated_at}] */
     printReadyFiles: jsonb("print_ready_files")

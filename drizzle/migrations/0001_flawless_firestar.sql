@@ -1,0 +1,1 @@
+ALTER TABLE "order_items" ALTER COLUMN "customization_snapshot" DROP NOT NULL;
