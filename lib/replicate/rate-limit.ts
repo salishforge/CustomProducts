@@ -12,7 +12,6 @@ import { db } from "@/lib/db/client";
 import { aiGenerations } from "@/drizzle/schema";
 
 const CUSTOMER_DAILY_HARD_CAP = 40;
-const CUSTOMER_DAILY_SOFT_CAP = 20;
 const GUEST_IP_DAILY_CAP = 5;
 
 export type RateLimitDecision =
@@ -42,21 +41,29 @@ export async function checkCustomerDailyCap(
   return { ok: true };
 }
 
-export function customerSoftCapReached(count: number): boolean {
-  return count >= CUSTOMER_DAILY_SOFT_CAP;
-}
-
-export async function checkGuestIpDailyCap(_ip: string): Promise<RateLimitDecision> {
-  // TODO Phase 2: persist guest counts by IP (a small ip_quota table or
-  // Upstash Redis). For the scaffold we accept guest requests; the daily
-  // aggregate ceiling and per-customer cap still protect spend.
+export async function checkGuestIpDailyCap(
+  ipHash: string,
+): Promise<RateLimitDecision> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(aiGenerations)
+    .where(
+      and(
+        eq(aiGenerations.guestIpHash, ipHash),
+        gte(aiGenerations.createdAt, dayWindowStart()),
+      ),
+    );
+  const count = row?.count ?? 0;
+  if (count >= GUEST_IP_DAILY_CAP) {
+    return { ok: false, reason: "guest_cap" };
+  }
   return { ok: true };
 }
 
 /**
  * Daily aggregate kill switch. If total spend in the last 24h exceeds the
- * env-configured ceiling, new generations are paused. Operator gets emailed
- * (TODO Phase 2) and can lift the cap.
+ * env-configured ceiling, new generations are paused. Operator-email-on-trip
+ * arrives with the live Replicate billing wire in Phase 2b.
  */
 export async function checkDailyCostCeiling(): Promise<RateLimitDecision> {
   const ceilingCents = Number.parseInt(
@@ -73,9 +80,3 @@ export async function checkDailyCostCeiling(): Promise<RateLimitDecision> {
   }
   return { ok: true };
 }
-
-export const RATE_LIMITS = {
-  CUSTOMER_DAILY_HARD_CAP,
-  CUSTOMER_DAILY_SOFT_CAP,
-  GUEST_IP_DAILY_CAP,
-};

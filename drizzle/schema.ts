@@ -388,6 +388,9 @@ export const aiGenerations = pgTable(
   {
     id: id(),
     customerId: fkOptional("customer_id"),
+    /** sha256 of the requesting IP for guest generations; null when authed.
+     *  Backs the per-IP daily cap without storing raw addresses. */
+    guestIpHash: text("guest_ip_hash"),
     prompt: text("prompt").notNull(),
     promptHash: text("prompt_hash").notNull(),
     model: text("model").notNull(),
@@ -413,6 +416,7 @@ export const aiGenerations = pgTable(
     uniqueIndex("ai_generations_cache_uniq").on(t.cacheKey),
     uniqueIndex("ai_generations_replicate_uniq").on(t.replicatePredictionId),
     index("ai_generations_customer_idx").on(t.customerId),
+    index("ai_generations_guest_ip_idx").on(t.guestIpHash),
     index("ai_generations_status_idx").on(t.status),
     index("ai_generations_cost_window_idx").on(t.createdAt),
   ],

@@ -19,7 +19,10 @@
 
 "use server";
 
+import { createHash } from "node:crypto";
+
 import { eq } from "drizzle-orm";
+import { headers } from "next/headers";
 
 import { db } from "@/lib/db/client";
 import { newId } from "@/lib/db/id";
@@ -52,9 +55,22 @@ export type CreateGenerationResult =
       detail?: string;
     };
 
+/**
+ * Derives a stable, privacy-preserving key for a guest request: the sha256 of
+ * the client IP. Vercel sets `x-forwarded-for` (first hop is the client) and
+ * `x-real-ip`; when neither is present (local dev with no proxy) all guests
+ * collapse into one bucket, which fails safe toward the cap rather than away.
+ */
+async function guestIpHashFromHeaders(): Promise<string> {
+  const h = await headers();
+  const forwarded = h.get("x-forwarded-for");
+  const ip =
+    forwarded?.split(",")[0]?.trim() || h.get("x-real-ip") || "unknown";
+  return createHash("sha256").update(ip).digest("hex");
+}
+
 export async function createGeneration(
   input: GenerationRequest,
-  ctx?: { guestIp?: string },
 ): Promise<CreateGenerationResult> {
   const parsed = generationRequestSchema.safeParse(input);
   if (!parsed.success) {
@@ -64,6 +80,7 @@ export async function createGeneration(
 
   const session = await getSession().catch(() => null);
   const customerId = session?.user?.id ?? null;
+  const guestIpHash = customerId ? null : await guestIpHashFromHeaders();
 
   const cacheKey = deriveCacheKey({
     prompt: request.prompt,
@@ -94,8 +111,8 @@ export async function createGeneration(
   if (customerId) {
     const customerGate = await checkCustomerDailyCap(customerId);
     if (!customerGate.ok) return { ok: false, reason: "rate_limited_customer" };
-  } else if (ctx?.guestIp) {
-    const guestGate = await checkGuestIpDailyCap(ctx.guestIp);
+  } else if (guestIpHash) {
+    const guestGate = await checkGuestIpDailyCap(guestIpHash);
     if (!guestGate.ok) return { ok: false, reason: "rate_limited_guest" };
   }
 
@@ -116,6 +133,7 @@ export async function createGeneration(
     await db.insert(aiGenerations).values({
       id: generationId,
       customerId,
+      guestIpHash,
       prompt: request.prompt,
       promptHash: normalizePrompt(request.prompt),
       model: request.model,
