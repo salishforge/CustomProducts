@@ -1,22 +1,26 @@
 /*
  * Replicate webhook handler.
  *
- * - Verifies signature against REPLICATE_WEBHOOK_SECRET (Replicate uses an
- *   `Webhook-Signature` HMAC-SHA256 header; verification is skipped in dev if
- *   the secret is unset, but the body is still parsed strictly).
+ * - Verifies the signature with the SDK's `validateWebhook`, which implements
+ *   Replicate's svix-style scheme: HMAC-SHA256 over `id.timestamp.body` keyed
+ *   by the base64 tail of REPLICATE_WEBHOOK_SECRET, compared against the
+ *   space-separated `v1,<sig>` entries in the `webhook-signature` header.
+ *   Verification is skipped in dev when the secret is unset; the body is still
+ *   parsed strictly.
  * - Idempotency via webhook_events.
- * - On success, downloads the output to R2, updates the ai_generations row,
- *   and fans out 'ai.generation.completed' so the waiting Inngest function
- *   resumes.
+ * - On success, records the output as an asset, prices the generation for the
+ *   daily cost ceiling, updates the ai_generations row, and fans out
+ *   'ai.generation.completed' so the waiting Inngest function resumes.
  *
- * The R2 download + asset row creation is stubbed until Phase 2 — the wire
- * is real, the body is incremental.
+ * The R2 re-download of the output (permanence + content addressing) is
+ * Phase 2b; today we pin Replicate's CDN URL as the asset key.
  */
 
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { validateWebhook } from "replicate";
 
 import { db } from "@/lib/db/client";
 import { newId } from "@/lib/db/id";
@@ -27,6 +31,7 @@ import {
 } from "@/drizzle/schema";
 import { replicatePredictionWebhookSchema } from "@/lib/parse";
 import { inngest } from "@/inngest/client";
+import { modelCostCents, type GenerationModel } from "@/lib/replicate/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,13 +40,17 @@ function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
-function verifySignature(rawBody: string, header: string | null): boolean {
+async function verifyWebhook(rawBody: string, request: Request): Promise<boolean> {
   const secret = process.env.REPLICATE_WEBHOOK_SECRET;
   if (!secret) return process.env.NODE_ENV !== "production";
-  if (!header) return false;
-  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+
+  const id = request.headers.get("webhook-id");
+  const timestamp = request.headers.get("webhook-timestamp");
+  const signature = request.headers.get("webhook-signature");
+  if (!id || !timestamp || !signature) return false;
+
   try {
-    return timingSafeEqual(Buffer.from(expected), Buffer.from(header));
+    return await validateWebhook({ id, timestamp, signature, body: rawBody, secret });
   } catch {
     return false;
   }
@@ -49,9 +58,8 @@ function verifySignature(rawBody: string, header: string | null): boolean {
 
 export async function POST(request: Request): Promise<Response> {
   const rawBody = await request.text();
-  const signature = request.headers.get("webhook-signature");
 
-  if (!verifySignature(rawBody, signature)) {
+  if (!(await verifyWebhook(rawBody, request))) {
     return NextResponse.json({ error: "invalid signature" }, { status: 400 });
   }
 
@@ -115,6 +123,9 @@ export async function POST(request: Request): Promise<Response> {
         status: "succeeded",
         completedAt: new Date(),
         outputAssetId,
+        // Prices the daily cost ceiling (kill switch). Conservative integer
+        // cents; precise sub-cent billing is Phase 2b. See modelCostCents.
+        costUsdCents: modelCostCents(generation.model as GenerationModel),
       })
       .where(eq(aiGenerations.id, generation.id));
 

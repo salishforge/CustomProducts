@@ -136,19 +136,25 @@ stub. Removed.
 `app/api/webhooks/replicate/route.ts:18-20` wrapped a sync hash in an `async`
 function. Inlined/desync'd.
 
-### L5 — Replicate webhook signature format 🟡
-`route.ts:38-48` HMACs the raw body and hex-compares against the
-`webhook-signature` header. Replicate's real format is svix-style
-(`v1,<base64>` over `id.timestamp.body`), so this won't validate production
-signatures as written. The dev-skip is correctly gated to non-production.
-Documented as Phase-2 work, to land **with** the actual Replicate call (L6) —
-verifying a format we can't yet exercise end-to-end would be untested code.
+### L5 — Replicate webhook signature format ✅
+`route.ts` previously HMAC'd the raw body and hex-compared against the
+`webhook-signature` header — not Replicate's svix scheme (`v1,<base64>` HMAC
+over `id.timestamp.body`, keyed by the base64 tail of the secret). **Fix:**
+delegate to the SDK's version-matched `validateWebhook`, reading the
+`webhook-id`/`webhook-timestamp`/`webhook-signature` headers; dev-skip stays
+gated to non-production. Covered by a signature round-trip test and a
+DB-backed route smoke (valid → 200, tampered → 400).
 
-### L6 — Replicate call unimplemented 🟡
-`inngest/functions/run-generation.ts:52-55` logs "would call Replicate" and
-suspends on the completion event. Known Phase-2 scaffold; the function signature
-and event wiring are final. No live AI spend occurs today, which is also why
-H2's cap and the cost ceiling are currently inert backstops. Documented.
+### L6 — Replicate call implemented ✅
+`inngest/functions/run-generation.ts` now resolves references, calls
+`predictions.create` with a webhook callback, persists the prediction id, and
+fails closed on error (no stuck `running` rows). Model→slug, per-model cost,
+and input mapping live in the new `lib/replicate/client.ts` (token-gated: no
+`REPLICATE_API_TOKEN`, no spend). The webhook now prices `cost_usd_cents`, so
+the daily ceiling is live (conservative integer cents — precise sub-cent
+billing and the R2 re-download remain Phase 2b). The live `predictions.create`
+network call is not yet exercisable end-to-end (no token in this environment);
+everything up to and including our webhook handler is smoke-verified.
 
 ### L7 — `resolve.ts` asset fetch (SSRF-shaped) ⬜
 `lib/print/resolve.ts:63-69` `fetch(row.r2Key)`. `r2Key` is **server-written**

@@ -2,21 +2,28 @@
  * Replicate generation orchestrator.
  *
  * Flow:
- *   1. Mark the ai_generations row as 'running'.
- *   2. Resolve reference images from R2 → upload to Replicate Files API.
- *   3. Call Replicate predictions.create() with a webhook callback URL.
- *   4. Suspend with step.waitForEvent('ai.generation.completed', { match: ... }).
- *   5. The /api/webhooks/replicate route fires that event when Replicate calls back.
+ *   1. Mark the ai_generations row 'running'.
+ *   2. Resolve reference-image asset ids → their public R2 URLs.
+ *   3. predictions.create() with a webhook pointed at /api/webhooks/replicate,
+ *      storing the returned prediction id (the webhook matches on it).
+ *   4. Suspend on step.waitForEvent('ai.generation.completed').
+ *   5. The webhook fires that event when Replicate calls back.
  *
- * Skeleton — Replicate / R2 wiring is filled in when credentials arrive.
- * The signature is final; the body is incremental.
+ * The R2 re-download of the output (for permanence + content addressing) is
+ * Phase 2b; the webhook currently pins Replicate's CDN URL as the asset key.
  */
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 import { db } from "@/lib/db/client";
-import { aiGenerations } from "@/drizzle/schema";
+import { aiGenerations, uploadedAssets } from "@/drizzle/schema";
 import { inngest } from "@/inngest/client";
+import {
+  buildModelInput,
+  getReplicateClient,
+  modelSlug,
+  type GenerationModel,
+} from "@/lib/replicate/client";
 
 export const runGeneration = inngest.createFunction(
   {
@@ -26,7 +33,7 @@ export const runGeneration = inngest.createFunction(
     retries: 1,
   },
   { event: "ai.generation.requested" },
-  async ({ event, step, logger }) => {
+  async ({ event, step }) => {
     const { generationId } = event.data;
 
     await step.run("mark-running", async () => {
@@ -49,10 +56,70 @@ export const runGeneration = inngest.createFunction(
       return row;
     });
 
-    // TODO: Phase 2 — upload references from R2 → Replicate Files,
-    // then predictions.create with webhook URL pointing at
-    // `${NEXT_PUBLIC_APP_URL}/api/webhooks/replicate`.
-    logger.info({ generationId, prompt: generation.prompt }, "would call Replicate");
+    const referenceUrls = await step.run("resolve-references", async () => {
+      const ids = generation.referenceImageAssetIds as string[];
+      if (ids.length === 0) return [];
+      const rows = await db
+        .select({ id: uploadedAssets.id, r2Key: uploadedAssets.r2Key })
+        .from(uploadedAssets)
+        .where(inArray(uploadedAssets.id, ids));
+      // r2Key holds the public locator; preserve request order (redux uses [0]).
+      const byId = new Map(rows.map((r) => [r.id, r.r2Key]));
+      return ids
+        .map((id) => byId.get(id))
+        .filter((url): url is string => typeof url === "string");
+    });
+
+    // Create the prediction. On any failure — including an unset token — mark
+    // the row failed in the same step so the customizer stops polling, rather
+    // than letting Inngest retry-then-abandon it in 'running'.
+    const created = await step.run("create-prediction", async () => {
+      try {
+        const client = getReplicateClient();
+        const appUrl =
+          process.env.NEXT_PUBLIC_APP_URL ?? "https://salishforge.com";
+        const model = generation.model as GenerationModel;
+        const params = generation.params as {
+          aspectRatio?: string;
+          seed?: number | null;
+        };
+
+        const prediction = await client.predictions.create({
+          model: modelSlug(model),
+          input: buildModelInput({
+            model,
+            prompt: generation.prompt,
+            aspectRatio: params.aspectRatio ?? "1:1",
+            seed: params.seed ?? null,
+            referenceImageUrls: referenceUrls,
+          }),
+          webhook: `${appUrl}/api/webhooks/replicate`,
+          webhook_events_filter: ["completed"],
+        });
+
+        await db
+          .update(aiGenerations)
+          .set({
+            replicatePredictionId: prediction.id,
+            modelVersion: prediction.version,
+          })
+          .where(eq(aiGenerations.id, generationId));
+
+        return { ok: true as const, predictionId: prediction.id };
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "replicate create failed";
+        await db
+          .update(aiGenerations)
+          .set({ status: "failed", errorMessage: message, completedAt: new Date() })
+          .where(eq(aiGenerations.id, generationId));
+        return { ok: false as const, message };
+      }
+    });
+
+    if (!created.ok) {
+      return { ok: false, reason: "create_failed", detail: created.message };
+    }
 
     // Suspend until the Replicate webhook fans out the completion event.
     const completion = await step.waitForEvent("await-completion", {
