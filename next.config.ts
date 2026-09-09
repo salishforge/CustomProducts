@@ -14,7 +14,6 @@ const config: NextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "imagedelivery.net" },
       { protocol: "https", hostname: "*.r2.cloudflarestorage.com" },
-      { protocol: "https", hostname: "replicate.delivery" },
     ],
   },
   serverExternalPackages: ["sharp"],

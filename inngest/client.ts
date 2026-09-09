@@ -21,6 +21,11 @@ type Events = {
   "ai.generation.requested": {
     data: z.infer<typeof aiGenerationRequestedEventSchema>;
   };
+  /* Replicate has finished and handed us a URL that expires. The ingest
+   * function fetches it into R2; only then does 'completed' fire. */
+  "ai.generation.output_ready": {
+    data: { generationId: string; outputUrl: string };
+  };
   "ai.generation.completed": {
     data: { generationId: string };
   };

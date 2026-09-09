@@ -1,5 +1,5 @@
 /*
- * Read gate for customizer uploads.
+ * Read gate for customizer assets — both uploads and AI generation output.
  *
  * The URL shape is unchanged from the fixture era — uploaded_assets rows and
  * saved design drafts both reference `/api/assets/{id}` — but the bytes now
@@ -43,7 +43,7 @@ export async function GET(
     .where(eq(uploadedAssets.id, id))
     .limit(1);
 
-  if (!asset || asset.kind !== "upload" || asset.moderationStatus === "rejected") {
+  if (!asset || asset.moderationStatus === "rejected") {
     return new NextResponse("Not found", { status: 404 });
   }
 

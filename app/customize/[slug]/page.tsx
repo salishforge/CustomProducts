@@ -27,17 +27,16 @@ async function resolveAssetUrls(
   if (assetIds.length === 0) return {};
 
   const rows = await db
-    .select({
-      id: uploadedAssets.id,
-      kind: uploadedAssets.kind,
-      r2Key: uploadedAssets.r2Key,
-    })
+    .select({ id: uploadedAssets.id })
     .from(uploadedAssets)
     .where(inArray(uploadedAssets.id, assetIds));
 
+  // Uploads and generation output are both private R2 objects now, so both are
+  // read through the route that signs them. It used to branch on kind because
+  // generations pinned Replicate's CDN URL.
   const map: Record<string, string> = {};
   for (const row of rows) {
-    map[row.id] = row.kind === "upload" ? `/api/assets/${row.id}` : row.r2Key;
+    map[row.id] = `/api/assets/${row.id}`;
   }
   return map;
 }

@@ -3,14 +3,13 @@
  *
  * Flow:
  *   1. Mark the ai_generations row 'running'.
- *   2. Resolve reference-image asset ids → their public R2 URLs.
+ *   2. Resolve reference-image asset ids → signed R2 URLs Replicate can fetch.
  *   3. predictions.create() with a webhook pointed at /api/webhooks/replicate,
  *      storing the returned prediction id (the webhook matches on it).
  *   4. Suspend on step.waitForEvent('ai.generation.completed').
- *   5. The webhook fires that event when Replicate calls back.
- *
- * The R2 re-download of the output (for permanence + content addressing) is
- * Phase 2b; the webhook currently pins Replicate's CDN URL as the asset key.
+ *   5. The webhook fans out 'ai.generation.output_ready'; the ingest function
+ *      stores the output in R2 and then sends the event this waits on. So the
+ *      wait covers the download too, not just Replicate's own runtime.
  */
 
 import { eq, inArray } from "drizzle-orm";
@@ -18,6 +17,7 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { aiGenerations, uploadedAssets } from "@/drizzle/schema";
 import { inngest } from "@/inngest/client";
+import { presignGet } from "@/lib/r2/client";
 import {
   buildModelInput,
   getReplicateClient,
@@ -63,11 +63,16 @@ export const runGeneration = inngest.createFunction(
         .select({ id: uploadedAssets.id, r2Key: uploadedAssets.r2Key })
         .from(uploadedAssets)
         .where(inArray(uploadedAssets.id, ids));
-      // r2Key holds the public locator; preserve request order (redux uses [0]).
       const byId = new Map(rows.map((r) => [r.id, r.r2Key]));
-      return ids
+      // The bucket is private, so Replicate needs a signed URL to fetch a
+      // reference image. An hour covers queue time on their side.
+      // Order is preserved — redux models use the first entry.
+      const keys = ids
         .map((id) => byId.get(id))
-        .filter((url): url is string => typeof url === "string");
+        .filter((key): key is string => typeof key === "string");
+      return Promise.all(
+        keys.map((key) => presignGet(key, { expiresIn: 3600 })),
+      );
     });
 
     // Create the prediction. On any failure — including an unset token — mark

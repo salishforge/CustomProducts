@@ -8,15 +8,16 @@
  *   Verification is skipped in dev when the secret is unset; the body is still
  *   parsed strictly.
  * - Idempotency via webhook_events.
- * - On success, records the output as an asset, prices the generation for the
- *   daily cost ceiling, updates the ai_generations row, and fans out
- *   'ai.generation.completed' so the waiting Inngest function resumes.
+ * - On success, prices the generation for the daily cost ceiling and fans out
+ *   'ai.generation.output_ready' carrying Replicate's output URL.
  *
- * The R2 re-download of the output (permanence + content addressing) is
- * Phase 2b; today we pin Replicate's CDN URL as the asset key.
+ * The handler deliberately does not create the asset — that means fetching an
+ * image, which wants durable retries rather than a webhook's single attempt.
+ * inngest/functions/ingest-generation-output.ts does the fetch, writes the
+ * object to R2 and only then sends 'ai.generation.completed'. The output URL
+ * travels in the event payload rather than a column: it expires, so it is not
+ * something to persist.
  */
-
-import { createHash } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -24,21 +25,13 @@ import { validateWebhook } from "replicate";
 
 import { db } from "@/lib/db/client";
 import { newId } from "@/lib/db/id";
-import {
-  aiGenerations,
-  uploadedAssets,
-  webhookEvents,
-} from "@/drizzle/schema";
+import { aiGenerations, webhookEvents } from "@/drizzle/schema";
 import { replicatePredictionWebhookSchema } from "@/lib/parse";
 import { inngest } from "@/inngest/client";
 import { modelCostCents, type GenerationModel } from "@/lib/replicate/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function sha256Hex(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
-}
 
 async function verifyWebhook(rawBody: string, request: Request): Promise<boolean> {
   const secret = process.env.REPLICATE_WEBHOOK_SECRET;
@@ -92,46 +85,41 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   if (payload.status === "succeeded") {
-    // The Replicate CDN URL is stable enough for MVP; pin it as the asset's
-    // r2_key so consumers have a single field to dereference. Phase 2b proper
-    // downloads + re-uploads to R2 for cost control + permanence.
     const outputUrl = Array.isArray(payload.output)
       ? payload.output[0]
       : payload.output;
-    let outputAssetId: string | null = null;
-    if (typeof outputUrl === "string" && outputUrl.length > 0) {
-      const assetId = newId();
-      // content_hash is computed from the URL itself in this interim mode;
-      // real content addressing arrives with the R2 download pipeline.
-      const contentHash = sha256Hex(outputUrl);
-      await db.insert(uploadedAssets).values({
-        id: assetId,
-        customerId: generation.customerId,
-        kind: "ai_generation",
-        r2Key: outputUrl,
-        mimeType: "image/webp",
-        byteSize: 0,
-        contentHash,
-        generationId: generation.id,
-        moderationStatus: "approved",
-      });
-      outputAssetId = assetId;
-    }
+
+    // Replicate charged us whether or not we manage to store the result, so
+    // the cost is recorded here rather than in the ingest step. The row stays
+    // 'running' until the asset exists.
     await db
       .update(aiGenerations)
       .set({
-        status: "succeeded",
-        completedAt: new Date(),
-        outputAssetId,
         // Prices the daily cost ceiling (kill switch). Conservative integer
-        // cents; precise sub-cent billing is Phase 2b. See modelCostCents.
+        // cents; precise sub-cent billing is deferred. See modelCostCents.
         costUsdCents: modelCostCents(generation.model as GenerationModel),
       })
       .where(eq(aiGenerations.id, generation.id));
 
+    if (typeof outputUrl !== "string" || outputUrl.length === 0) {
+      await db
+        .update(aiGenerations)
+        .set({
+          status: "failed",
+          errorMessage: "Replicate reported success with no output",
+          completedAt: new Date(),
+        })
+        .where(eq(aiGenerations.id, generation.id));
+      await inngest.send({
+        name: "ai.generation.failed",
+        data: { generationId: generation.id, error: "no output" },
+      });
+      return NextResponse.json({ ok: true });
+    }
+
     await inngest.send({
-      name: "ai.generation.completed",
-      data: { generationId: generation.id },
+      name: "ai.generation.output_ready",
+      data: { generationId: generation.id, outputUrl },
     });
   } else if (payload.status === "failed" || payload.status === "canceled") {
     await db

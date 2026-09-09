@@ -47,7 +47,8 @@ export async function getGenerationStatus(
     if (!asset) return { status: "running" };
     return {
       status: "succeeded",
-      assetUrl: asset.r2Key,
+      // r2_key is a private object key; the client gets the route that signs it.
+      assetUrl: `/api/assets/${asset.id}`,
       assetId: asset.id,
     };
   }
