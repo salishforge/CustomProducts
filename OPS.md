@@ -46,6 +46,7 @@ Migration SQL is hand-reviewed before commit. `drizzle-kit` auto-loads
 | `STRIPE_WEBHOOK_SECRET` | Webhook signature verify | Webhook returns 400; orders don't land |
 | `REPLICATE_API_TOKEN` | Customizer AI generate | Action throws on click |
 | `REPLICATE_WEBHOOK_SECRET` | Generation completion | Webhook returns 400; generations stall |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | All asset storage | `lib/r2` throws on first call naming the missing var |
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_IMAGES_API_TOKEN` | Image upload | Upload action throws; admin page shows banner |
 | `CLOUDFLARE_IMAGES_DELIVERY_DOMAIN` | Image render | URLs fall through to `imagedelivery.net/unset/...` (placeholder tints still show) |
 | `RESEND_API_KEY` | Order email | Inngest function returns `ok: false, reason: 'resend_not_configured'`; replay from Inngest UI after configuring |
@@ -86,6 +87,51 @@ shipped`). Click the per-card stage button to advance one stage. Every
 advance writes an append-only `production_stages` row keyed by the
 operator email; the customer-facing order detail page reads from the
 same table.
+
+## R2 bucket setup
+
+One private bucket per environment — `salishforge-dev` and `salishforge-prod` —
+holding four key prefixes: `incoming/`, `uploads/`, `ai/`, `print/`. There is no
+public bucket and no custom domain: public access in R2 is bucket-level, and
+print files carry customer artwork, so reads go through presigned GETs instead.
+
+Development points at the dev bucket rather than at local disk. That means
+**development now needs network access and R2 credentials** — the trade is that
+the storage path exercised on a laptop is the same one that runs in production.
+
+1. **Create the bucket** — Cloudflare dashboard → R2 → Create bucket. Location
+   hint `wnam` (the shop and its customers are Pacific Northwest).
+2. **Create an API token** — R2 → Manage API Tokens → *Object Read & Write*,
+   scoped to that one bucket. Copy the access key id and secret into
+   `.env.local`; the account id is in the R2 sidebar.
+3. **Set the CORS policy** — bucket → Settings → CORS policy. **This is
+   load-bearing, not optional.** The customizer sets `crossOrigin="anonymous"`
+   on every canvas image, so once `/api/assets/[id]` redirects to R2 the browser
+   requires these headers. Without them images fail to load and the Konva stage
+   renders empty *with no server-side error*.
+
+   ```json
+   [
+     {
+       "AllowedOrigins": ["http://localhost:3000", "https://salishforge.com"],
+       "AllowedMethods": ["GET", "PUT"],
+       "AllowedHeaders": ["content-type", "content-length"],
+       "ExposeHeaders": ["etag"],
+       "MaxAgeSeconds": 3600
+     }
+   ]
+   ```
+
+   `PUT` and the two headers are for the browser's direct upload, whose
+   signature covers exactly those headers.
+4. **Set the lifecycle rule** — bucket → Settings → Object lifecycle rules →
+   prefix `incoming/`, delete after **1 day**. This is the only garbage
+   collection in the storage design: objects under `incoming/` are uploads
+   abandoned before the browser called `/api/uploads/complete`. Without the
+   rule they accumulate forever.
+
+Verify with `pnpm test` (signing, offline) and — once G2 lands — one real
+upload through the customizer.
 
 ## Print-ready files
 
