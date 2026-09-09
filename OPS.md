@@ -99,8 +99,13 @@ Development points at the dev bucket rather than at local disk. That means
 **development now needs network access and R2 credentials** — the trade is that
 the storage path exercised on a laptop is the same one that runs in production.
 
-1. **Create the bucket** — Cloudflare dashboard → R2 → Create bucket. Location
-   hint `wnam` (the shop and its customers are Pacific Northwest).
+1. **Create the bucket** — Cloudflare dashboard → R2 → Create bucket. Set the
+   location hint to `wnam`; the shop and its customers are Pacific Northwest,
+   and a bucket's location cannot be changed after creation. `salishforge-dev`
+   already exists and sits in `ENAM` — it was created through the Cloudflare
+   connector, which accepts only a name — which is acceptable for development
+   and is not acceptable for `salishforge-prod`. Create that one in the
+   dashboard.
 2. **Create an API token** — R2 → Manage API Tokens → *Object Read & Write*,
    scoped to that one bucket. Copy the access key id and secret into
    `.env.local`; the account id is in the R2 sidebar.
