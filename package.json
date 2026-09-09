@@ -68,14 +68,18 @@
   },
   "packageManager": "pnpm@10.33.2",
   "pnpm": {
-    "comment": "Security overrides for transitive deps. Same-major, backward-compatible bumps to patched versions. esbuild is intentionally NOT overridden: its advisories are dev-only (Windows file-read, dev-server SSRF never served) and forcing it risks tsx, which runs the test suite.",
+    "comment": "Security overrides for transitive deps. Same-major, backward-compatible bumps to patched versions. Selectors carry the vulnerable range so an override stops applying once a dependency ships a patched version on its own. brace-expansion is pinned per major line because 1.x and 5.x are both in the tree via different minimatch versions. esbuild is intentionally NOT overridden: its advisories are dev-only (Windows file-read, dev-server SSRF never served) and forcing it risks tsx, which runs the test suite.",
     "overrides": {
       "cookie@<0.7.0": "^0.7.2",
       "qs@<6.15.2": "^6.15.2",
       "protobufjs@<=7.6.2": "^7.6.3",
-      "postcss@<8.5.10": "^8.5.15",
-      "js-yaml@<4.2.0": "^4.2.0",
-      "@opentelemetry/core@<2.8.0": "^2.8.0"
+      "postcss@<8.5.18": "^8.5.18",
+      "js-yaml@<4.3.2": "^4.3.2",
+      "nanoid@<3.3.18": "^3.3.18",
+      "brace-expansion@1": "^1.1.18",
+      "brace-expansion@5": "^5.0.9",
+      "@opentelemetry/core@<2.8.0": "^2.8.0",
+      "@opentelemetry/propagator-jaeger@<2.9.0": "^2.9.0"
     }
   }
 }
