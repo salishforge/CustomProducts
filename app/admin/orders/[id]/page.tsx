@@ -141,7 +141,7 @@ export default async function AdminOrderDetail({
                         {(it.printReadyFiles as Array<{ filename: string; kind: string }>).map((f) => (
                           <li key={f.filename}>
                             <a
-                              href={`/api/admin/print-fixtures/${order.id}/${it.id}/${encodeURIComponent(f.filename)}`}
+                              href={`/api/admin/print-files/${order.id}/${it.id}/${encodeURIComponent(f.filename)}`}
                               className="font-mono text-xs text-[color:var(--color-ink-800)] hover:text-[color:var(--color-ember-700)] transition-colors"
                             >
                               ↓ {f.filename}

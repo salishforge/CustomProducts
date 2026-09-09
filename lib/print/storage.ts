@@ -1,69 +1,64 @@
 /*
  * Print-file storage.
  *
- * Two backends, env-selected:
- *   - 'fixture' (default in dev): writes to ./print-fixtures/{orderId}/.
- *     Files are downloadable via the admin route handler at
- *     /api/admin/print-fixtures/[orderId]/[filename] (signed by session).
- *   - 'r2' (set PRINT_STORAGE_BACKEND=r2): uploads to Cloudflare R2 under
- *     r2://print/{orderId}/{itemId}/{filename}. Reads pull a 1h-signed URL.
+ * Print files go to R2 under `print/{orderId}/{itemId}/{filename}` and nowhere
+ * else. There is no local-disk mode: a serverless invocation does not keep what
+ * it writes to disk, so a fixture backend would mean the path exercised in
+ * development is not the path that runs in production — and the production one
+ * would be the untested half. One backend, exercised every day.
  *
- * The bundle returned per item lives in order_items.print_ready_files jsonb
- * as `[{kind, filename, location, generatedAt}]` so the admin UI can render
- * a download list without needing to re-derive paths.
+ * The bucket is private. Operators reach these files through
+ * /api/admin/print-files/..., which checks the admin session and then redirects
+ * to a short-lived signed URL; nothing here is publicly readable.
+ *
+ * The bundle returned per item lives in order_items.print_ready_files jsonb as
+ * `[{kind, filename, location, byteSize, generatedAt}]`, where `location` is the
+ * R2 object key. The admin route looks the key up from that row rather than
+ * rebuilding it from URL segments, so a request cannot name an object the
+ * pipeline did not write.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
-
 import type { PrintFile } from "./dispatch";
+import { putObject } from "@/lib/r2/client";
+import { printKey } from "@/lib/r2/keys";
 
 export type StoredPrintFile = {
   kind: PrintFile["kind"];
   filename: string;
-  /** Backend-dependent locator. Fixture: relative path under print-fixtures.
-   *  R2: object key. The admin UI dispatches on backend. */
+  /** R2 object key. */
   location: string;
   byteSize: number;
   generatedAt: string;
 };
 
-function backend(): "fixture" | "r2" {
-  return (process.env.PRINT_STORAGE_BACKEND ?? "fixture") as "fixture" | "r2";
-}
-
-async function storeOneFixture(
-  orderId: string,
-  itemId: string,
-  file: PrintFile,
-): Promise<StoredPrintFile> {
-  const dir = path.join(process.cwd(), "print-fixtures", orderId, itemId);
-  await mkdir(dir, { recursive: true });
-  const abs = path.join(dir, file.filename);
-  await writeFile(abs, file.bytes);
-  return {
-    kind: file.kind,
-    filename: file.filename,
-    location: path.relative(process.cwd(), abs),
-    byteSize: file.bytes.byteLength,
-    generatedAt: new Date().toISOString(),
-  };
-}
+/** Stored on the object so a signed URL serves the right type without the
+ *  download route having to re-derive it. */
+const CONTENT_TYPE_BY_KIND: Record<PrintFile["kind"], string> = {
+  svg: "image/svg+xml",
+  pdf: "application/pdf",
+  png: "image/png",
+  dxf: "application/dxf",
+  depth_map: "image/png",
+};
 
 export async function storePrintFiles(
   orderId: string,
   itemId: string,
   files: PrintFile[],
 ): Promise<StoredPrintFile[]> {
-  const target = backend();
-  if (target === "r2") {
-    throw new Error(
-      "R2 print storage requested but not yet implemented — leave PRINT_STORAGE_BACKEND unset for fixture mode",
-    );
+  const stored: StoredPrintFile[] = [];
+
+  for (const file of files) {
+    const key = printKey(orderId, itemId, file.filename);
+    await putObject(key, file.bytes, CONTENT_TYPE_BY_KIND[file.kind]);
+    stored.push({
+      kind: file.kind,
+      filename: file.filename,
+      location: key,
+      byteSize: file.bytes.byteLength,
+      generatedAt: new Date().toISOString(),
+    });
   }
-  const out: StoredPrintFile[] = [];
-  for (const f of files) {
-    out.push(await storeOneFixture(orderId, itemId, f));
-  }
-  return out;
+
+  return stored;
 }

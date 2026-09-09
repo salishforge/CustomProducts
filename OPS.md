@@ -56,7 +56,6 @@ Migration SQL is hand-reviewed before commit. `drizzle-kit` auto-loads
 | `DESIGN_CONSOLE_DAILY_COST_CEILING_USD_CENTS` | Phase 4 LLM cost cap | Defaults to 200 (\$2/day) |
 | `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` | Inngest production | Local dev server doesn't need these |
 | `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN` | Error reporting | No-op; logs go to stdout via pino |
-| `PRINT_STORAGE_BACKEND` | `r2` to write print files to R2 | Default `fixture` writes to `./print-fixtures/{orderId}/{itemId}/` — removed in G3 |
 | `NEXT_PUBLIC_APP_URL` | Stripe redirects, emails, sitemap | Defaults to `http://localhost:3000` (wrong in prod!) |
 
 ## Order lifecycle
@@ -75,9 +74,8 @@ Migration SQL is hand-reviewed before commit. `drizzle-kit` auto-loads
    `order.print_files_needed` event per order item.
 5. **Inngest `generatePrintFiles`** consumes each `order.print_files_needed`
    → resolves the design state, builds SVG/PDF/etc. by family, stores under
-   `./print-fixtures/{orderId}/{itemId}/` (or R2 once
-   `PRINT_STORAGE_BACKEND=r2`), updates `order_items.print_ready_files` +
-   `productionStatus='files_ready'`.
+   `print/{orderId}/{itemId}/{filename}` in R2, updates
+   `order_items.print_ready_files` + `productionStatus='files_ready'`.
 
 ## Production board
 
@@ -155,8 +153,13 @@ and hash check → promotion out of `incoming/` → the `/api/assets/[id]` redir
 `order_items.print_ready_files` is `[{ kind, filename, location, byteSize,
 generatedAt }]`. Admin order detail (`/admin/orders/[id]`) renders a
 download link per file pointing at
-`/api/admin/print-fixtures/{orderId}/{itemId}/{filename}` (fixture mode).
-Replace with presigned R2 URLs once `PRINT_STORAGE_BACKEND=r2` lands.
+`/api/admin/print-files/{orderId}/{itemId}/{filename}`, where `location` is the
+R2 object key. That route checks the admin session and redirects to a
+five-minute signed URL; the bucket itself is private, so the link is the only
+way in and it cannot be shared beyond its expiry.
+
+The route looks the key up from `print_ready_files` rather than building it from
+the URL, so a request can only name a file the pipeline actually recorded.
 
 To regenerate files for an order (e.g. spec drift or operator edit), in the
 Inngest dashboard manually replay the `order.print_files_needed` event
