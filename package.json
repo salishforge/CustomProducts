@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "node --import tsx --test tests/*.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -42,7 +42,7 @@
     "react-konva": "^19.2.4",
     "replicate": "^1.0.1",
     "resend": "^4.0.1",
-    "sharp": "^0.35.0",
+    "sharp": "^0.35.4",
     "stripe": "^17.4.0",
     "three": "^0.171.0",
     "zod": "^3.24.1"

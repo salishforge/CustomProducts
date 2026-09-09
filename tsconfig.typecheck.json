@@ -1,0 +1,24 @@
+{
+  // Typecheck-only config. It exists because sharp 0.35 added an `exports`
+  // field with only "import"/"require" conditions - no "types" - and
+  // moduleResolution "bundler" respects `exports`, so the declarations sharp
+  // still ships at lib/index.d.ts became unreachable and every `import sharp`
+  // silently degraded to `any` under strict.
+  //
+  // The mapping cannot live in tsconfig.json: both Next and tsx honour
+  // tsconfig `paths` for *runtime* resolution, which aliases sharp to a .d.ts
+  // and makes sharp(bytes).metadata() throw inside a route handler - verified,
+  // /api/uploads/complete returned 400 "Could not read that image". Keeping it
+  // here gives the gate real types while leaving every runtime untouched.
+  //
+  // Checked sharp 0.35.1-0.35.4: none add the "types" condition. Delete this
+  // file and point `pnpm typecheck` back at tsconfig.json once upstream does.
+  // https://github.com/lovell/sharp
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./*"],
+      "sharp": ["./node_modules/sharp/lib/index.d.ts"]
+    }
+  }
+}
