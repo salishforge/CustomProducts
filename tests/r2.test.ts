@@ -9,7 +9,11 @@
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 
-import { aiKey, incomingKey, printKey, uploadKey } from "../lib/r2/keys";
+import { aiKey, extForMime, incomingKey, printKey, uploadKey } from "../lib/r2/keys";
+import {
+  completeUploadRequestSchema,
+  presignUploadRequestSchema,
+} from "../lib/parse";
 import { presignGet, presignPut } from "../lib/r2/client";
 
 describe("r2 keys", () => {
@@ -121,5 +125,83 @@ describe("presignGet", () => {
     );
 
     assert.equal(url.searchParams.get("response-content-disposition"), null);
+  });
+});
+
+describe("extForMime", () => {
+  it("maps every type the upload schema admits", () => {
+    assert.equal(extForMime("image/png"), "png");
+    assert.equal(extForMime("image/jpeg"), "jpg");
+    assert.equal(extForMime("image/webp"), "webp");
+    assert.equal(extForMime("image/avif"), "avif");
+  });
+
+  it("is case-insensitive, since the type comes back off an R2 object", () => {
+    assert.equal(extForMime("IMAGE/PNG"), "png");
+  });
+});
+
+describe("presignUploadRequestSchema", () => {
+  const valid = {
+    filename: "photo.png",
+    mimeType: "image/png",
+    byteSize: 2048,
+    contentHash: "a".repeat(64),
+  };
+
+  it("accepts a raster upload inside the size cap", () => {
+    assert.equal(presignUploadRequestSchema.safeParse(valid).success, true);
+  });
+
+  it("rejects SVG, which has no tested path through the print pipeline", () => {
+    const result = presignUploadRequestSchema.safeParse({
+      ...valid,
+      mimeType: "image/svg+xml",
+    });
+
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a file over 25MB", () => {
+    const result = presignUploadRequestSchema.safeParse({
+      ...valid,
+      byteSize: 26 * 1024 * 1024,
+    });
+
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a hash that is not 64 hex characters", () => {
+    const result = presignUploadRequestSchema.safeParse({
+      ...valid,
+      contentHash: "not-a-hash",
+    });
+
+    assert.equal(result.success, false);
+  });
+});
+
+describe("completeUploadRequestSchema", () => {
+  it("takes the asset id, filename and hash", () => {
+    const result = completeUploadRequestSchema.safeParse({
+      assetId: "abc123",
+      filename: "photo.png",
+      contentHash: "b".repeat(64),
+    });
+
+    assert.equal(result.success, true);
+  });
+
+  it("does not require a mime type — the server reads it back from R2", () => {
+    const result = completeUploadRequestSchema.safeParse({
+      assetId: "abc123",
+      filename: "photo.png",
+      contentHash: "b".repeat(64),
+      mimeType: "image/png",
+    });
+
+    assert.equal(result.success, true);
+    if (!result.success) return;
+    assert.equal("mimeType" in result.data, false);
   });
 });

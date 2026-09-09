@@ -27,6 +27,21 @@ export function incomingKey(assetId: string): string {
   return `incoming/${assetId}`;
 }
 
+/** Extension per accepted upload type. The set matches
+ *  presignUploadRequestSchema — a type the schema admits but this map does not
+ *  would land as `.bin` and break the served content type. */
+const EXT_BY_MIME: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/webp": "webp",
+  "image/avif": "avif",
+};
+
+export function extForMime(mimeType: string): string {
+  return EXT_BY_MIME[mimeType.toLowerCase()] ?? "bin";
+}
+
 export function uploadKey(assetId: string, ext: string): string {
   return `uploads/${assetId}.${ext}`;
 }

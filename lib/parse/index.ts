@@ -101,20 +101,38 @@ export type ReplicatePredictionWebhook = z.infer<
 
 export const presignUploadRequestSchema = z.object({
   filename: z.string().min(1).max(255),
+  // Raster only. SVG was listed here before anything read this schema, but a
+  // user-supplied vector has no tested route through the print pipeline (the
+  // PDF builder embeds raster bytes) and rasterizing untrusted SVG is its own
+  // decision. Add it back alongside a print path that handles it.
   mimeType: z
     .string()
-    .regex(/^image\/(png|jpe?g|webp|avif|svg\+xml)$/i, "Unsupported mime type"),
+    .regex(/^image\/(png|jpe?g|webp|avif)$/i, "Unsupported mime type"),
   byteSize: z
     .number()
     .int()
     .positive()
     .max(25 * 1024 * 1024, "Max 25MB"),
-  /** Hex sha256 of the bytes, computed in browser before request. */
+  /** Hex sha256 of the bytes, computed in browser before request. The server
+   *  recomputes it from the stored object and rejects a mismatch, so this is
+   *  an integrity check on the transfer, not a trusted input. */
   contentHash: z.string().length(64).regex(/^[0-9a-f]+$/i),
   kind: z.enum(["upload", "reference"]).default("upload"),
 });
 
 export type PresignUploadRequest = z.infer<typeof presignUploadRequestSchema>;
+
+/** Second leg of the upload: the browser has PUT the bytes to the quarantine
+ *  prefix and asks the server to verify and promote them. mimeType is absent
+ *  deliberately — the server reads it back from R2, where it is part of what
+ *  the presigned PUT signature covered. */
+export const completeUploadRequestSchema = z.object({
+  assetId: z.string().min(1).max(64),
+  filename: z.string().min(1).max(255),
+  contentHash: z.string().length(64).regex(/^[0-9a-f]+$/i),
+});
+
+export type CompleteUploadRequest = z.infer<typeof completeUploadRequestSchema>;
 
 // -----------------------------------------------------------------------------
 // Cart mutations

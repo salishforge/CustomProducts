@@ -11,6 +11,7 @@
 import { eq } from "drizzle-orm";
 
 import { db } from "@/lib/db/client";
+import { getObject } from "@/lib/r2/client";
 import { uploadedAssets } from "@/drizzle/schema";
 import type { DesignState, Layer } from "@/lib/parse";
 
@@ -58,8 +59,8 @@ async function fetchAssetBytes(
     .limit(1);
   if (!row) return null;
 
-  // r2Key holds an http(s) URL during the interim Replicate-direct mode.
-  // Once the R2 download pipeline lands, this branch reads from R2 instead.
+  // AI generations still pin Replicate's CDN URL as their key. That ends when
+  // generation output is ingested into R2; this branch goes with it.
   if (/^https?:\/\//.test(row.r2Key)) {
     const res = await fetch(row.r2Key);
     if (!res.ok) {
@@ -69,8 +70,10 @@ async function fetchAssetBytes(
     return { bytes: buf, mimeType: row.mimeType, source: row.r2Key };
   }
 
-  // TODO Phase 3: R2 GetObject path goes here.
-  throw new Error(`Unsupported r2Key shape (no http scheme): ${row.r2Key}`);
+  // Reads the object directly rather than going through /api/assets, so print
+  // generation costs no HTTP hop and needs no app URL.
+  const object = await getObject(row.r2Key);
+  return { bytes: object.bytes, mimeType: object.contentType, source: row.r2Key };
 }
 
 export async function resolveDesignState(

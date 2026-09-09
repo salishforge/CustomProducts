@@ -56,7 +56,7 @@ Migration SQL is hand-reviewed before commit. `drizzle-kit` auto-loads
 | `DESIGN_CONSOLE_DAILY_COST_CEILING_USD_CENTS` | Phase 4 LLM cost cap | Defaults to 200 (\$2/day) |
 | `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` | Inngest production | Local dev server doesn't need these |
 | `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN` | Error reporting | No-op; logs go to stdout via pino |
-| `PRINT_STORAGE_BACKEND` | `r2` to write print files to R2 | Default `fixture` writes to `./print-fixtures/{orderId}/{itemId}/` |
+| `PRINT_STORAGE_BACKEND` | `r2` to write print files to R2 | Default `fixture` writes to `./print-fixtures/{orderId}/{itemId}/` — removed in G3 |
 | `NEXT_PUBLIC_APP_URL` | Stripe redirects, emails, sitemap | Defaults to `http://localhost:3000` (wrong in prod!) |
 
 ## Order lifecycle
@@ -109,7 +109,8 @@ the storage path exercised on a laptop is the same one that runs in production.
 2. **Create an API token** — R2 → Manage API Tokens → *Object Read & Write*,
    scoped to that one bucket. Copy the access key id and secret into
    `.env.local`; the account id is in the R2 sidebar.
-3. **Set the CORS policy** — bucket → Settings → CORS policy. **This is
+3. **Set the CORS policy** — bucket → Settings → CORS policy, or the S3
+   `PutBucketCors` operation with the same credentials. **This is
    load-bearing, not optional.** The customizer sets `crossOrigin="anonymous"`
    on every canvas image, so once `/api/assets/[id]` redirects to R2 the browser
    requires these headers. Without them images fail to load and the Konva stage
@@ -135,8 +136,19 @@ the storage path exercised on a laptop is the same one that runs in production.
    abandoned before the browser called `/api/uploads/complete`. Without the
    rule they accumulate forever.
 
-Verify with `pnpm test` (signing, offline) and — once G2 lands — one real
-upload through the customizer.
+   If you set this through the S3 API instead
+   (`PutBucketLifecycleConfiguration`), note that it **replaces the entire rule
+   set**, not just the rule you name. A fresh R2 bucket ships with a
+   `Default Multipart Abort Rule` (abort incomplete multipart uploads after 7
+   days); send it back alongside yours or incomplete uploads bill forever. The
+   dev bucket currently carries both rules.
+
+`salishforge-dev` already has the CORS policy and both lifecycle rules applied.
+
+Verify storage end to end by running the dev server and uploading an image in
+the customizer. What that exercises: presign → direct PUT → server-side decode
+and hash check → promotion out of `incoming/` → the `/api/assets/[id]` redirect
+→ CORS on the canvas fetch.
 
 ## Print-ready files
 

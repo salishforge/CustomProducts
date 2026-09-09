@@ -1,13 +1,10 @@
 "use server";
 
-import { createHash } from "node:crypto";
-
 import { and, eq } from "drizzle-orm";
-import sharp from "sharp";
 
 import { db } from "@/lib/db/client";
 import { newId } from "@/lib/db/id";
-import { designDrafts, uploadedAssets } from "@/drizzle/schema";
+import { designDrafts } from "@/drizzle/schema";
 import { getSession } from "@/lib/auth";
 import { designStateSchema, type DesignState } from "@/lib/parse";
 import {
@@ -15,7 +12,6 @@ import {
   type CreateGenerationResult,
 } from "@/lib/replicate/generation-pipeline";
 import { getGenerationStatus } from "@/lib/queries/generations";
-import { ALLOWED_UPLOAD_MIME, storeUpload } from "@/lib/uploads/storage";
 
 export type SaveDraftResult =
   | { ok: true; draftId: string }
@@ -99,73 +95,4 @@ export async function generateForCustomizerAction(input: {
 export async function pollGenerationStatusAction(generationId: string) {
   const session = await getSession().catch(() => null);
   return getGenerationStatus(generationId, session?.user?.id ?? null);
-}
-
-const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
-
-export type UploadImageResult =
-  | {
-      ok: true;
-      assetId: string;
-      url: string;
-      width: number | null;
-      height: number | null;
-    }
-  | { ok: false; reason: string };
-
-/**
- * Direct image upload from the customizer. The bytes are validated with sharp
- * (a real decode, not a trusted mime string), written to fixture storage, and
- * recorded in uploaded_assets. The returned url is what the client sets as the
- * image layer's source; it is also what the print resolver fetches later.
- */
-export async function uploadCustomizerImageAction(
-  formData: FormData,
-): Promise<UploadImageResult> {
-  const file = formData.get("file");
-  if (!(file instanceof File)) {
-    return { ok: false, reason: "No file provided" };
-  }
-  if (!ALLOWED_UPLOAD_MIME.has(file.type)) {
-    return { ok: false, reason: "Use a PNG, JPEG, WebP, or AVIF image" };
-  }
-  if (file.size > MAX_UPLOAD_BYTES) {
-    return { ok: false, reason: "Image exceeds 15 MB" };
-  }
-
-  const bytes = new Uint8Array(await file.arrayBuffer());
-
-  let width: number | null = null;
-  let height: number | null = null;
-  try {
-    const meta = await sharp(bytes).metadata();
-    width = meta.width ?? null;
-    height = meta.height ?? null;
-  } catch {
-    return { ok: false, reason: "Could not read that image" };
-  }
-
-  const session = await getSession().catch(() => null);
-  const customerId = session?.user?.id ?? null;
-
-  const assetId = newId();
-  await storeUpload(assetId, file.type, bytes);
-
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-  await db.insert(uploadedAssets).values({
-    id: assetId,
-    customerId,
-    kind: "upload",
-    r2Key: `${appUrl}/api/assets/${assetId}`,
-    mimeType: file.type,
-    widthPx: width,
-    heightPx: height,
-    byteSize: bytes.byteLength,
-    originalFilename: file.name.slice(0, 255),
-    contentHash: createHash("sha256").update(bytes).digest("hex"),
-    // No upload-moderation pipeline in MVP; uploads are usable immediately.
-    moderationStatus: "approved",
-  });
-
-  return { ok: true, assetId, url: `/api/assets/${assetId}`, width, height };
 }

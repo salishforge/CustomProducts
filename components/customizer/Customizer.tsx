@@ -13,8 +13,8 @@ import {
   generateForCustomizerAction,
   pollGenerationStatusAction,
   saveDesignDraftAction,
-  uploadCustomizerImageAction,
 } from "@/app/customize/[slug]/_actions/customizer";
+import { uploadImageFile } from "@/lib/uploads/upload-file";
 
 /*
  * Customizer (Phase 2b polish).
@@ -280,9 +280,7 @@ export function Customizer({
       e.target.value = ""; // allow re-picking the same file
       if (!file) return;
       setUploadState("uploading");
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await uploadCustomizerImageAction(fd);
+      const res = await uploadImageFile(file);
       if (!res.ok) {
         setUploadState("error");
         return;
