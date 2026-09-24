@@ -22,8 +22,6 @@
     "@aws-sdk/s3-request-presigner": "^3.700.0",
     "@imgly/background-removal": "^1.7.0",
     "@paralleldrive/cuid2": "^2.2.2",
-    "@react-three/drei": "^9.122.0",
-    "@react-three/fiber": "^8.18.0",
     "@workos-inc/authkit-nextjs": "^2.10.0",
     "@workos-inc/node": "^7.71.0",
     "drizzle-orm": "^0.45.2",
@@ -44,7 +42,6 @@
     "resend": "^4.0.1",
     "sharp": "^0.35.4",
     "stripe": "^17.4.0",
-    "three": "^0.171.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -53,7 +50,6 @@
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
-    "@types/three": "^0.171.0",
     "drizzle-kit": "^0.31.10",
     "drizzle-zod": "^0.8.3",
     "eslint": "^9.17.0",
