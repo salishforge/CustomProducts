@@ -22,6 +22,11 @@ const QUICK_LINKS = [
     blurb: "Display names, blurbs, sort order, visibility.",
   },
   {
+    href: "/admin/wrap-studio",
+    title: "Wrap Studio",
+    blurb: "Tumbler wrap layout and UV print-layer export.",
+  },
+  {
     href: "/admin/settings",
     title: "Site settings",
     blurb: "Shipping policy, lead time disclosure, feature flags.",
